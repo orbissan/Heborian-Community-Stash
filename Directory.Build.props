@@ -1,0 +1,5 @@
+<Project>
+  <PropertyGroup>
+    <Version>$([System.Text.RegularExpressions.Regex]::Match($([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)src/Shared/BuildInfo.cs')), 'Version = &quot;([^&quot;]+)&quot;').Groups[1].Value)</Version>
+  </PropertyGroup>
+</Project>

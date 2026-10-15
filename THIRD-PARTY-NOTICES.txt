@@ -1,0 +1,6 @@
+Design reference: Welcome Messages by KittehKun
+https://github.com/KittehKun/spt-welcome-messages
+
+Heborian independently implements the same locale-transformer approach for
+the installed SPT 4.1.6 API. It does not bundle the reference mod's code,
+message collection, binaries, or any SPT/game assemblies.

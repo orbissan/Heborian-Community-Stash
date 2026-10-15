@@ -1,0 +1,416 @@
+HEBORIAN — PŘIDÁVÁNÍ MODULŮ
+
+STRUKTURA
+Heborian.slnx
+src/Heborian.Server/
+  HeborianServer.cs             vstup SPT, načtení konfigurace, registrace
+  ModMetadata.cs                metadata SPT 4.1.6
+  Configuration/                typovaná konfigurace serveru
+  Modules/IServerModule.cs       kontrakt serverového modulu
+  Modules/ServerModuleHost.cs    zapínání a oddělené spouštění
+  Modules/MainMenuBanner/        současná funkce a její nastavení
+src/Heborian.Client/
+  HeborianPlugin.cs              vstup BepInEx a kontrola verze
+  Modules/                      kontrakt, kontext a životní cyklus klienta
+  Resources/ModuleAssets.cs      načítání prostředků vlastněných modulem
+  Modules/HeborianMenu/          vlastní tab, prázdná obrazovka, BACK a vstup
+src/Shared/BuildInfo.cs          jediný údaj o verzi, společný pro obě DLL
+Directory.Build.props           načtení verze pro standardní sestavení MSBuild
+config/server/config.example.json
+assets/                         obsah pro BepInEx/plugins/Heborian/assets/
+tests/                          regresní testy obou částí
+tools/                          pomocník pro kompilaci a testy
+
+ZÁKLADNÍ PRAVIDLA
+Každá funkce má vlastní adresář, ID, konfiguraci a implementaci. Registrace
+je explicitní seznam, nikoliv vyhledávání dalších pluginů/reflexí. Není zde
+síťová synchronizace ani další modifikační framework uvnitř BepInEx/SPT.
+Serverové a klientské projekty se vzájemně nereferencují.
+
+Konstruktor modulu pouze převezme závislosti, nemění hru. Inicializace běží
+jednou po startu; zapínání a konfigurace se projeví až po restartu. Moduly
+nepřistupují přímo ke stavu jiných modulů. Potřebují-li společnou službu,
+předá se explicitně konstruktorem nebo kontextem. Případnou komunikaci mezi
+serverem a klientem navrhneme až pro konkrétní funkci.
+
+SERVEROVÝ MODUL
+1. Vytvořte Modules/<Id>/<Id>Module.cs a <Id>Options.cs.
+2. Options obsahuje Enabled=true a vlastní nastavení. Přidejte vlastnost
+   se stejným ID do ServerConfiguration a příklad do config.example.json.
+3. Implementujte IServerModule. IsEnabled čte pouze svoji sekci konfigurace.
+   InitializeAsync nejprve zkontroluje všechna nastavení a potřebná data,
+   teprve potom provede úpravy v paměti pomocí příslušných API SPT.
+4. Označte modul [Injectable(InjectionType.Singleton)] a potřebné služby SPT
+   přijímejte konstruktorem. Přidejte parametr do konstruktoru HeborianServer
+   a instanci do jeho pole modules. Ostatní moduly se nemusí upravovat.
+5. Přidejte test vypnutého modulu, vlastní konfigurace a zachování dat mimo
+   jeho odpovědnost. Ověřte přesné API proti instalaci SPT 4.1.6.
+
+Příklad tvaru nové sekce v ServerConfiguration:
+  public ExampleOptions Example { get; set; } = new();
+
+Příklad rozhraní modulu (ukázka, nikoliv registrovaná funkce):
+  public string Id => "Example";
+  public bool IsEnabled(ServerConfiguration c) => c.Example.Enabled;
+  public Task InitializeAsync(ServerConfiguration c, CancellationToken token)
+  {
+      token.ThrowIfCancellationRequested();
+      // Validace, poté zamýšlená úprava dat pouze v paměti.
+      return Task.CompletedTask;
+  }
+
+ServerModuleHost loguje Disabled, Loaded nebo FAILED s ID. Výjimka jednoho
+modulu neblokuje další; zrušení pomocí CancellationToken se propaguje.
+Neexistuje univerzální rollback změn databáze v paměti. Modul musí validovat
+před zápisem, při složitější operaci si zajistit vlastní zotavení a být
+odolný proti opakované inicializaci. Pro vypnutí již provedené serverové
+změny slouží restart, který znovu načte původní databázi.
+
+MainMenuBanner registruje pro každý jazyk LazyLoad.AddTransformer. Ten
+invaliduje případnou cache; slovníky se nenačítají předčasně. Nadpis se
+zachytí při inicializaci a mění se pouze tři konkrétní lokalizační klíče.
+Popisy musejí být jedna mezera, nikoliv string.Empty. Ve verzi hry pro SPT
+4.1.6 LocalizedText.UpdateLocale vrací řízení před SetLabelText při prázdném
+řetězci; původní ruský text uložený v UI pak zůstane viditelný. Regresní test
+vyžaduje neprázdný řetězec tvořený pouze bílými znaky u obou popisů.
+
+KLIENTSKÝ MODUL
+1. Vytvořte Modules/<Id>/<Id>Module.cs implementující IClientModule.
+   ID obsahuje písmena, číslice a podtržítka, začíná písmenem. Je jedinečné.
+2. Implementujte Initialize(ClientModuleContext context) a Dispose().
+3. Přidejte new <Id>Module() do seznamu host.Start v HeborianPlugin.Awake.
+4. Vlastní nastavení definujte přes context.Bind("Key", defaultValue, popis).
+   Host automaticky přidá Enabled ve vlastní sekci [Modules.<Id>].
+   Klíč Enabled je vyhrazen pro host; modul jej znovu nedefinuje.
+5. Pro log použijte context.Log a uvádějte ID. Pro soubory context.Assets.
+6. Přidejte test inicializace, vypnutí, selhání a úklidu. UI i prostředky
+   ověřte také v běžné hře, samotné testy mimo Unity nemohou ověřit vykreslení.
+
+Ukázka (není součástí spuštěných modulů):
+  public sealed class ExampleModule : IClientModule
+  {
+      public string Id => "Example";
+      public void Initialize(ClientModuleContext context)
+      {
+          var label = context.Bind("Label", "Example", "Popis; restart hry.");
+          context.Log.LogInfo("[Example] " + label.Value);
+      }
+      public void Dispose()
+      {
+          // Odhlásit události a odstranit vlastní úpravy, pokud byly založeny.
+      }
+  }
+
+Initialize se spouští na hlavním vlákně Unity v Awake pluginu. Obrazovka menu
+nemusí ještě existovat; budoucí UI modul se musí přihlásit na vhodnou událost
+nebo použít ověřený patch SPT a v Dispose ho odstranit. Další potřebné reference
+(např. spt-reflection nebo Harmony) přidávejte teprve při jejich skutečném
+použití, v csproj vždy Private=false, nikdy je nepřibalujte do distribučního ZIPu.
+
+Host vyčistí i modul, jehož inicializace skončila výjimkou, a pokračuje dalším.
+Dispose musí být bezpečné i před Initialize, po částečné inicializaci a při
+opakovaném volání. Při zániku pluginu se aktivní moduly uklízejí v opačném
+pořadí. Každý modul odhlašuje své události, UI objekty, coroutine a patche.
+Pro Harmony používejte vlastní ID například local.heborian.client.Example;
+nikdy globální UnpatchAll odstraňující patche jiných modů.
+
+PROSTŘEDKY KLIENTA
+Soubory uložte do assets/<Id>/ ve zdrojovém projektu. Build je zkopíruje do
+BepInEx/plugins/Heborian/assets/<Id>/. Při přidání souborů rozšiřte také
+explicitní seznam installFiles v build.ps1: ten hlídá obsah distribučního ZIPu.
+
+  byte[] data = context.Assets.ReadBytes("data.bin");
+  Texture2D image = context.Assets.LoadTexture("image.png");
+
+Cesty jsou relativní k vlastnímu adresáři modulu; absolutní cesta nebo výstup
+pomocí ../ je odmítnut. Souborová cesta není sandbox proti symlinkům vytvořeným
+uživatelem. LoadTexture podporuje formáty PNG/JPEG dostupné v Unity LoadImage.
+Chybějící nebo neplatný soubor vyvolá výjimku. Upload textury a její uvolnění
+vyžadují hlavní vlákno Unity. Vrácené textury vlastní ModuleAssets: host je
+zničí po Dispose modulu nebo po neúspěšné inicializaci. Modul je neničí podruhé
+a nepředává je jako sdílený stav jinému modulu. Sprite/GameObject vytvořený
+modulem uklízí modul sám před uvolněním jeho textur.
+
+KONFIGURACE A VERZOVÁNÍ
+Nová sekce serveru musí mít bezpečné výchozí hodnoty pro starší config.json.
+Server konfiguraci při aktualizaci nepřepisuje ani automaticky nemigruje.
+Při přejmenování sekce napište konkrétní migraci s její zálohou a testem;
+neznámé klíče jsou záměrně odmítány kvůli překlepům. Klient používá BepInEx
+ConfigFile a oddělené sekce. Změny za běhu se v této verzi neaplikují.
+Při vydání změňte pouze konstantu Version v src/Shared/BuildInfo.cs.
+Metadata serveru, BepInPlugin, banner, Directory.Build.props, kompilátor
+a názvy ZIPů používají tuto hodnotu. Dokumentaci aktualizujte podle vydání.
+Obě DLL obsahují vlastní kompilovanou kopii BuildInfo, nevzniká další závislost.
+
+MODUL HEBORIANMENU (OD 1.2.0)
+Používá vlastní Harmony ID local.heborian.client.HeborianMenu a postfix
+MenuTaskBar.Awake; již existující lišty vyhledá jednorázově při inicializaci.
+Od 1.2.1 klonuje Character toggle a řadí jej před CHARACTER v témže rodiči.
+Popisek HEBORIAN přebírá nativní typografii i rozložení. Před aktivací nahradí
+klikací event, přidělí vlastní ToggleGroup a vypne původní lokalizaci/tooltip.
+Nepřidává umělé hodnoty EMenuType/EEftScreenType do interních slovníků hry.
+Obrazovka je samostatná UI vrstva nad aktuálním menu s původní spodní lištou.
+BACK je klon nativního DefaultUIButton z inventáře s vlastními posluchači.
+Klávesové vstupy přebírá vlastní InputNode přidaný do InputTree pouze po dobu
+otevření panelu; Escape zavře panel a zablokuje průchod do menu pod ním.
+Od 1.2.1 se strom hledá přes Resources.FindObjectsOfTypeAll a cíl delegátu
+aktivního InputManageru. Běžné FindObjectOfType ve skutečném menu vracelo
+null. Vyhledávání vylučuje prefab assets a neaktivní manažery; při obalení
+delegátu jiným modem se použije strom navázaný na aktivní InputManager.
+Dostupnost nadále hlídá Handbook, nikoli Character dostupný také v raidu.
+Nativní změna obrazovky nebo klik na původní tab panel zavře. Zánik/disable
+lišty i vypnutí modulu odstraní jeho vstup, vlastní objekty a posluchače.
+Po zavření zůstává původní obrazovka v původním stavu. Jde o prázdný panel,
+nikoliv dosud o datovou stránku nebo o nový vestavěný EFT screen controller.
+Rozšíření obsahu patří do HeborianMenuView.EnsurePanel nebo do dalšího
+samostatného modulu s explicitní vazbou; neměňte jiné herní obrazovky.
+
+REFERENCE
+SPT instalace: IModMetadata, IOnLoad.OnLoadAsync(CancellationToken),
+OnLoadOrder.PostLoad, LocaleTable, LazyLoad<GlobalLocaleDictionary>.
+BepInEx 5: BaseUnityPlugin, BepInPlugin, BepInDependency, ConfigFile.
+https://docs.bepinex.dev/v5.4.16/api/BepInEx.BaseUnityPlugin.html
+https://github.com/sp-tarkov/modules
+Inspirace původní funkcí banneru: https://github.com/KittehKun/spt-welcome-messages
+
+OD 1.2.2: Heborian.TabSpacer je vlastní neklikací LayoutElement mezi tabem
+a CHARACTER (min/preferredWidth=10, flexibleWidth=0), uklízený v Release.
+OnTabChanged přehrává GUISounds.PlayUISound(ButtonBottomBarClick), stejně
+jako nativní MenuTaskBar. Programové resety bez notifikace zvuk nespouštějí.
+Comfort.dll je pouze reference ze hry, nedistribuuje se s modem.
+
+OD 1.2.3: HeborianMenu vlastní sprite z assets/HeborianMenu/icon_heborian_01.png.
+Výběr nativních toggle se při otevření uloží a tiše zhasne (včetně animací).
+BACK obnoví uložený výběr; nativní navigace snapshot zahodí. LateUpdate hlídá
+asynchronní návrat zvýraznění. Native ToggleGroup se povolí vypnout pouze
+po dobu tichého resetu, poté se jeho původní allowSwitchOff obnoví.
+
+COMMUNITYWAREHOUSE (OD 1.3.0)
+Server: WarehouseModule (singleton IServerModule), WarehouseStore (žurnál a
+atomický zápis souboru), WarehouseReadRouter a WarehouseItemRouter.
+Read je GET /heborian/warehouse s nativním EmptyRequestData. SPT transport
+komprimuje odpověď zlib; klient ji čte přes SPT.Common.Http.RequestHandler.
+Mutace je ItemRouteAction<WarehouseRequest> s Action="HeborianWarehouse".
+Tělo: requestId (GUID N), direction (deposit/withdraw), itemId, revision.
+Identita se bere pouze ze session argumentu SPT, nikoli z těla požadavku.
+
+Jeden SemaphoreSlim serializuje všechny požadavky tohoto skladu. Server
+ověří profil, vlastnictví, podporovaný typ, revizi a kapacitu. Neakceptuje
+klientem dodaná data předmětu. Request ID se ukládají v historii. Zápisy:
+1. warehouse.json s Pending a cílovým předmětem profilu;
+2. změna profilu v paměti a SaveProfileAsync;
+3. změna skladu + historie + revize, vymazání Pending a atomický File.Replace.
+Při chybě po zahájení zápisu se modul uzavře. Startup opakuje jen přesun
+konkrétní položky, nikdy nepřepisuje celý inventář. Rozpor v datech = fail closed.
+Historie zatím není promazávána; obsahuje snapshoty pro diagnostiku.
+
+Klient: samostatný WarehouseClientModule s vlastním životním cyklem.
+WarehouseView se kreslí pouze při HeborianMenuView.AnyOpen. GET každé 2 sekundy
+jen při otevřeném panelu; mutace přes IEftSession.SendOperationRightNow,
+nativní frontu a profileChanges del/new. Lokální profil se ručně nemodifikuje.
+Client DTO jsou oddělené od serveru; Newtonsoft, SPT.Common a Unity UI
+jsou reference z instalace a nejsou přibalené do ZIPu.
+Další etapa: nativní item views/drag-drop, rozdělování stacků, klanové ACL.
+Před rozšířením transakcí vždy testovat souběh, replay a recovery.
+
+OD 1.3.1: WarehouseView spravuje síťový stav, WarehousePanel vlastní Unity UI.
+HeborianMenuView.ActiveContentRoot poskytuje kořen aktivního obsahu; mimo
+otevřený tab vrací null. ActiveTextTemplate poskytuje font nativního tabu.
+Modul vytváří UI jako potomka tohoto kořene, před nativním BACK v pořadí
+sourozenců. Nepoužívá vlastní Canvas ani IMGUI; dědí vrstvení a raycaster
+panelu. Při výměně kořene se UI znovu sestaví, Dispose odstraní své objekty.
+Při zavření se automaticky skryje spolu s rodičem. Návrhová plocha 1280 × 800
+se škáluje do dostupného obsahu bez deformace čtvercové mřížky. Seznam má
+ScrollRect + RectMask2D. Polling beze změny dat zachovává prvky i posun seznamu.
+Serverový protokol, ukládání předmětů a pravidla přesunů se v 1.3.1 nemění.
+
+OD 1.3.2: MenuContentLifecycle poskytuje Opened/Updated/Closed. Obrazovka
+volá Open synchronně po aktivaci panelu, Tick okamžitě a dále v LateUpdate,
+Close při zavření. Odběratelé jsou izolovaní proti výjimkám, chyby se hlásí
+přes callback obrazovky. Samostatný startup objekt WarehouseView již není.
+WarehouseClientModule registruje spravovaný WarehouseController a při Dispose
+všechny tři odběry odhlásí. Controller.Open vytvoří WarehousePanel přímo;
+Controller.Tick spravuje polling/UI, Close uvolní UI, Dispose ignoruje
+opožděné odpovědi mutací. Při dalším otevření se vytvoří nový panel.
+Pro nový obsah použijte stejný životní cyklus a vlastní Dispose; nespoléhejte
+na globální polling z objektu založeného před načtením herní scény.
+SetContentStatus umožňuje zobrazit chybu a po úspěšném vytvoření UI stav skrýt.
+
+OD 1.4.0: NATIVNÍ ZOBRAZENÍ A ADAPTÉR PŘESUNŮ
+NativeWarehouseItem vytváří oddělený Item přes ItemFactory ze serverového
+id/template/upd. SnapshotContext a vlastní ItemController jej předají
+GridItemView z ItemViewFactory poolu grid_layout. NewGridItemView + Init
+zajišťují původní ikony, pozadí a údaje. Není dovoleno použít živý Item
+z hráčova inventáře ani předat nativní UI operace proti sdílenému skladu.
+Raycasty/layers se při Dispose obnoví, Kill vrátí view do poolu a context
+se uvolní. Knihovny a prefaby patří hře a do distribučního ZIPu nevstupují.
+
+WarehousePanel vlastní obě mřížky, wrappery a stav přetahování. Osobní
+položky řadí WarehousePacking do osmi sloupců; jde o filtrovaný kompaktní
+přehled, nikoli kopii souřadnic stash. Native views jsou virtualizované
+podle viditelných řádků. WarehouseItemInput přesměruje kliknutí/drag na
+serverový adaptér. UnityEngine.InputLegacyModule je build reference pro Ctrl.
+Při drag se polling neaplikuje a pohledy se nerecyklují. Po přesunu se
+zahodí starý snapshot a načte nový. Nativní profilové delty zůstávají jedinou
+cestou aktualizace skutečného inventáře. Přímé klientské mutace jsou zakázané.
+
+GET nově vrací upd položky. Mutace přijímá volitelné x/y pouze pro deposit;
+oba musí být zadány společně. WarehouseStore.PlaceAt kontroluje hranice
+a překryvy včetně extrémních integer hodnot před zápisem žurnálu. Bez x/y
+platí automatické umístění. Withdraw vždy používá serverové volné místo
+v osobním skladu. Schéma uloženého skladu zůstává 1, stará data se nemigrují.
+Zbraně/kontejnery, rotace, split/merge, lokální přeskládání a kontextová menu
+vyžadují zvláštní návrh protokolu a další transakční testy, nejsou aktivní.
+
+OD 1.4.1: ORGANIZACE SKLADU
+Direction=move vyžaduje x/y a položku již přítomnou ve společném skladu.
+Stejný gate, kontrola session, revize a requestId jako u převodů. Reposition
+kontroluje kolize bez přesouvané položky, vytvoří oddělenou kopii stavu,
+přidá auditní záznam a zvýší revizi. Uloží vše jediným atomickým Persist.
+Nepoužívá dvoustranný žurnál ani profilové delty, protože vlastník se nemění.
+Při chybě zápisu vrátí původní paměťový stav a modul zablokuje do restartu.
+Kopie stavu chrání staré auditní záznamy před změnou sdílené reference Entry.
+Schéma skladu zůstává 1. Klient určuje move jen při dropu sdílené položky
+do sdílené mřížky; withdraw při dropu doprava. Náhled ignoruje vlastní ID,
+server vždy kontroluje aktuální stav znovu. Polling rozšíří změnu ostatním.
+
+OD 1.4.2: CELL TEXTURE
+CommunityWarehouse načítá cell_full_border.png přes ModuleAssets jednou
+při inicializaci. TextureWrapMode.Repeat; RawImage.uvRect=(0,0,8,rows).
+Obě mřížky tedy kreslí jedno pozadí bez vytváření objektu pro každou buňku.
+Osobní textura je pod stejným RectMask2D a ScrollRect jako položky.
+RaycastTarget=false pro texturu i rámečky, aby neblokovaly gesta.
+Controller ani panel texturu nevlastní; uvolní ji kontext modulu až po UI.
+Asset musí zůstat ve whitelistu build.ps1, originální herní data se nemění.
+
+OD 1.4.3: ROTACE
+WarehouseEntry.Rotated (default false) je orientace ve společném skladu;
+Width/Height jsou efektivní obsazené rozměry. Staré JSON funguje beze změny.
+GET vrací rotated. Deposit a move přijímají volitelné rotated; move bez
+hodnoty zachová orientaci. Při změně se rozměry prohodí před kolizní kontrolou.
+Json původního předmětu se nemění. Withdraw vybírá místo/orientaci nativně.
+Klient mění pouze dragRotated/dragWidth/dragHeight během gesta, snapshot
+zůstává neměnný. Nativní ItemView.ItemRotation vykreslí změnu; CancelDrag
+obnoví originál, potvrzený serverový snapshot pak vytvoří uloženou orientaci.
+R se čte v otevřeném drag stavu s ochranou Time.frameCount proti dvojímu
+přepnutí při OnDrag a LateUpdate ve stejném snímku. Uvolnění mimo platný
+cíl nepřenáší žádnou operaci na server.
+
+OD 1.4.4: NATIVNÍ MĚŘÍTKO
+NativeWarehouseItem.CellPitch = GetCellPixelSize(2,1).X - GetCellPixelSize(1,1).X.
+Nezaměňovat s vnějším rozměrem jednoho item view (63 vs 64 v SPT 4.1.6).
+WarehousePanel.Resize omezuje návrhové měřítko na CellPitch/Cell, s fallbackem
+zmenšení do dostupné plochy. NativeWarehouseItem škáluje opačně Cell/CellPitch,
+takže při nativní velikosti nevzniká nadbytečné přepočítání item grafiky.
+Pozice, drag náhledy, R rotace a obě texturované mřížky sdílí stejný rodič;
+serverové souřadnice jsou stále v celých buňkách, nikoli v pixelech.
+
+OD 1.5.0: ČÁSTEČNÉ PŘEVODY
+Request.amount je volitelné celé číslo 1..aktuální StackObjectsCount.
+Bez amount nebo při plném počtu platí dosavadní chování. Částečné množství
+vyžaduje StackMaxSize > 1. Nová část má nový MongoId, kopii upd a nový počet.
+Deposit ukládá do žurnálu ProfileBeforeJson/ProfileAfterJson pro původní ID;
+recovery přijímá pouze přesný before nebo již uložený after. Zbytek se vrací
+jako ChangedItems. Withdraw ukládá SharedRemainder a novou cílovou položku;
+profil dostává NewItems. Vnitřní dělení má Direction=split, SharedRemainder
+a nový Entry; ApplyProfile nedělá nic. Všechny varianty používají stávající
+gate, revision, requestId, žurnál a atomický Commit. Staré záznamy bez nových
+polí zůstávají čitelné. Starý server neumí obnovit rozpracovaný nový split.
+
+WarehousePanel používá klon SplitDialog jako modální vrstvu. Ctrl zachycený
+během dragu požádá o množství, Ctrl + kliknutí zůstává rychlý plný převod.
+Zdrojová buňka při částečném dělení není uvolněná v kolizním náhledu.
+Snapshot je po dobu dialogu zmrazený, server stale revision kontroluje znovu.
+HeborianMenuInput.CancelModal je nastaven pouze pro životnost dialogu a
+vymazán při zavření/dispose. Native accept callback předá amount serveru.
+
+1.5.1 — SQUARE ITEM ROTATION
+WarehousePanel only processes R when dragWidth != dragHeight.
+WarehouseModule suppresses square rotation for deposits and partial transfers.
+WarehouseStore.Reposition ignores square orientation requests, preserving legacy
+orientation while allowing positional movement. No saved-state migration needed.
+WarehouseVerification covers square sizes 1/2/3, both legacy orientations,
+relocation, persisted dimensions/data, and the existing rectangular cases.
+`n1.5.2: NativeWarehouseItem explicitly enables the native FIR panel for MarkedAsSpawnedInSession snapshots. Private sprite/image/label fields are ABI-checked by Test-MenuBindings.ps1. Restore pooled presentation on disposal; never assign SpawnedInSession or modify server data.
+
+1.5.3 — CURSOR-CELL DROP TARGET
+WarehousePanel converts the cursor directly into shared-grid coordinates.
+WarehousePacking.DropPosition floors each coordinate and subtracts the grabbed
+cell index, never the fractional pointer-to-item offset. The visual drag ghost
+still follows the grab point. Rotation swaps grab indices along with dimensions.
+Preview, collision validation and submitted move/split use the same dropX/dropY.
+ClientVerification covers within-cell stability, exact boundaries and grab anchors.
+
+1.5.4 — SPLIT DIALOG BEFORE FIRST NATIVE USE
+Clone ItemUiContext.Instance._splitDialogTemplate directly. Do not discover a
+scene SplitDialog: EFT instantiates it lazily, so a fresh session has none.
+The clone stays owned by the warehouse modal layer, with warehouse callbacks.
+Test-MenuBindings verifies the prefab field and native lazy getter against EFT.
+
+1.5.5 — CENTERED DRAG
+CenterDragOnCursor sets the top-left wrapper offset to half of the current
+footprint at BeginDrag and after rotation. The drop anchor is width/2,height/2
+(integer division), independent of the original click. Even footprints choose
+the right/bottom center cell. Cursor-cell flooring still prevents intra-cell jumps.
+This supersedes the grabbed-cell preservation described for version 1.5.3.
+
+1.6.0 — STACK MERGE
+Snapshot items expose maxStack from the actual server template. A pointer over
+another tile selects a target ID and personal/shared flag. CanMerge is preview
+only. Empty-cell drops retain their existing move/transfer behavior. Ctrl opens
+the amount dialog with a merge callback. The server never trusts preview data.
+WarehouseRequest adds targetId and targetPersonal. A deposit source is personal;
+withdraw/move source is shared. Both personal endpoints must pass Eligible.
+WarehouseStackRules checks upd equality excluding count (normalizing absent/false
+SpawnedInSession) and caps the transfer at the target template's StackMaxSize.
+The gate, revision and request ID validation apply before merge validation.
+Direction=merge journals ProfileChanges (Before/After, null After means delete),
+SharedRemoved IDs and SharedUpdated entries. ApplyProfile validates all changes
+before mutation, accepts already-saved after images only in recovery, saves once.
+Store.Commit replaces only affected entries and increments revision once.
+Personal changes use ordinary SPT changed/deleted inventory deltas; no new IDs.
+Test-MergeRuntime.ps1 exercises real endpoints on restored isolated fixtures.
+Test-MergeRecovery.ps1 validates restart recovery on both sides of profile save.
+
+1.6.1 — ICON-ONLY DRAG GHOST
+WarehousePanel keeps the source tile in place and creates a non-raycast Image
+inside a separate centered dragGhost. NativeWarehouseItem.UpdateDragIcon copies
+only MainImage presentation, including async sprite refresh and scaled geometry.
+R rotates the ghost using native ItemViewFactory rotations. The source native
+view is never reparented, resized or rotated during drag. CancelDrag destroys
+the ghost before native tiles are released. Preview and mutation routing stay
+unchanged. No native inventory drag scripts or extra item contexts are created.
+
+1.6.2 — SOURCE ICON ONLY AND SELF DROP
+During drag, NativeWarehouseItem captures and disables every Graphic except
+MainImage. RestoreSourcePresentation restores the captured enabled states on
+CancelDrag and Dispose, before native pooling. Do not disable GameObjects:
+the icon can share ancestors with labels and still needs async loading.
+Pointer hit testing includes the dragged source; CanMerge rejects its own ID,
+showing red and skipping all transfer requests when released over that tile.
+
+1.7.0 — SHARED DIMENSIONS AND SCROLLED LAYOUT
+WarehouseDimensions in Shared is compiled into both assemblies (bundled and
+MSBuild paths). Shared storage is 16x16; personal compact packing stays 8 wide.
+Store schema remains 1, preserving existing coordinates and IDs. Do not downgrade
+the server after using cells beyond the old bounds; old clients reject new size.
+WarehousePanel now anchors top-left. SharedViewport masks a full 16x16 content;
+height adapts to the screen and a separate ScrollRect/scrollbar exposes all rows.
+Drop hit tests use the viewport, coordinate calculations use the scrolled content.
+Wheel input during drag scrolls shared content once per frame. Personal rendering
+uses viewport height to determine visible rows, preserving the dragged item.
+
+1.7.1 — SCROLLBAR GEOMETRY AND 32 ROWS
+WarehouseDimensions.Height is 32; width stays 16. Personal minimum rows stay 16.
+Scrollbar handles must have zero sizeDelta/offsets: Unity sets their anchors to
+the visible fraction. A fixed height adds to that fraction and extends the handle
+outside its track. Both scrollbar tracks are now 14 units wide, remain aligned
+to viewport height, and disable keyboard navigation. Do not size handles in Resize.
+1.7.2: Both inventory headers share one style. Removed selection transfer button and footer hints; errors and REFRESH remain. Drag, split, merge and quick-transfer unchanged.
+1.7.3: Removed footer layout. Both viewports and scrollbar tracks end 8 units above the content bottom (which already excludes the native taskbar). REFRESH and errors are in the header row; cell scale and storage dimensions unchanged.
+1.7.4: Drag-edge scrolling uses viewport-local coordinates, a one-cell edge band and up to six cells/second with unscaled time (50ms frame cap). Only the hovered viewport scrolls; positions clamp to content bounds. Personal virtualization retains the drag source and detaches merge highlight before recycling views. Drop target is recomputed after scrolling; ending the drag resets visibility caching.
+1.7.5: Disabled ScrollRects cannot update scrollbar visuals during a drag. Sync both handle sizes and values from viewport/content dimensions and clamped top-anchored offsets on every drag update; SetValueWithoutNotify avoids event feedback.
+1.8.0: Snapshot personalWidth/personalHeight reuse SPT GetPlayerStashSize (4.1.6 protected method via reflection, includes bonuses). All direct hideout roots carry coordinates, rotation, composite dimensions via GetItemSize, transferable flag and full descendant tree. Native FlatItemsToTree recreates detached composite items for correct icons. Personal view uses actual coordinates, dynamic column/row sizes; unsupported wrappers dim to 35% and reject all drag/click/merge actions. Server authorization unchanged.
+1.9.0: AllowedDeposits booleans checked only for crossing personal-to-shared (whole, split and merge). Eligibility checks every descendant for category, quest and insurance constraints. Personal canReceive is independent of category policy. Complete trees persist via ChildrenJson; profile before/after changes journal every node and recovery does not recheck current category settings. Legacy single-item journals remain supported. No pruning on config changes; restart required.
+1.10.0: CommunityWarehouse.Rows defaults to 32, range 1..1024, fixed width 16. Store validation uses persistent maximum bounds; active placements use Rows with clipped occupancy of hidden entries. Snapshots expose fully visible entries only and anonymous reserved rectangles for boundary-crossing entries. Hidden source/target requests rejected; journal recovery bypasses visibility. Client header/grid/scroll/drop bounds follow snapshot height; personal viewport remains independent.
+1.10.1: Use native Step split dialog for counts >100; IntSlider.Show allocates max-min notch GameObjects whereas StepSlider.Show caps notch count at 24. Read StepSlider integer backing field on acceptance to avoid its float-return conversion rounding typed large amounts. Validate 1..source count before submitting; applies to all split directions and merges.

@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <!-- Preserve the installed 1.0 filename so an extracted update replaces it. -->
+    <AssemblyName>Heborian</AssemblyName>
+    <RootNamespace>Heborian.Server</RootNamespace>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <SptRoot Condition="'$(SptRoot)' == ''">$(MSBuildThisFileDirectory)..\..\..</SptRoot>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\Shared\BuildInfo.cs" Link="BuildInfo.cs" />
+    <Compile Include="..\Shared\WarehouseDimensions.cs" Link="WarehouseDimensions.cs" />
+    <Reference Include="SPTarkov.Server.Core"><HintPath>$(SptRoot)\SPT_Runtime\SPTarkov.Server.Core.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="SPTarkov.DI"><HintPath>$(SptRoot)\SPT_Runtime\SPTarkov.DI.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="SPTarkov.Common"><HintPath>$(SptRoot)\SPT_Runtime\SPTarkov.Common.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="SemanticVersioning"><HintPath>$(SptRoot)\SPT_Runtime\SemanticVersioning.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+</Project>

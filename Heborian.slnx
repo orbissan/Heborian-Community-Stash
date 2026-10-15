@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="src/Heborian.Server/Heborian.Server.csproj" />
+  <Project Path="src/Heborian.Client/Heborian.Client.csproj" />
+</Solution>

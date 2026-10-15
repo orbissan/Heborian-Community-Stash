@@ -1,0 +1,619 @@
+HEBORIAN 1.10.1 — VELKÉ HROMÁDKY A DIALOG DĚLENÍ
+Inspekce IL instalované Assembly-CSharp potvrdila: IntSlider.Show vytváří
+max-min GameObjects. SplitDialog s count=1000000 spustí 999999 instanciací.
+StepSlider.Show omezuje počet značek na 24. Hromádky >100 nyní používají Step.
+Logy skončily bez explicitní výjimky; samotný nativní pád nebyl reprodukován.
+Přijímaná hodnota se čte z int pole, nikoli float návratu CurrentValue.
+Automatické kontroly prošly včetně hranic 100/101, velmi vysokých počtů,
+validace množství a skutečných vazeb StepSlideru v herní assembly.
+Izolovaný HTTP test prošel pro 1000000 RUB, 50000 USD, 50000 EUR a 60 nábojů:
+přesný dílčí vklad, dělení uvnitř skladu, částečný výběr, zachování součtu.
+Testovací profily/konfigurace/sklad obnoveny; testovací server ukončen.
+Otevření a ovládání opraveného dialogu v běžící hře nebylo přímo ověřeno.
+
+HEBORIAN 1.10.0 — NASTAVITELNÉ ŘÁDKY BEZ MAZÁNÍ
+Rows 1–1024, default 32, šířka vždy 16. Trvalé uložení je nezávislé
+na aktuálně aktivních řádcích; skryté položky zůstávají včetně potomků.
+Testy skladu ověřily zmenšení, rezervaci přesahu, zachování při dalších
+zápisech, růst na 64 řádků i neplatné hodnoty. Testy náhledu ověřují
+proměnnou výšku a blokování buněk skrytých přesahujících položek.
+Izolovaný HTTP test prošel: 16×2, skrytý zdroj odmítnut, přesahy rezervovány,
+vklad mimo aktivní oblast odmítnut, nový vklad zachoval skryté položky,
+restart s 16×32 obnovil viditelnost i původní pozice a počty.
+Testovací konfigurace, profily a sklad obnoveny; server ukončen.
+Vizuální ověření přímo ve hře nebylo provedeno.
+
+HEBORIAN 1.9.0 — SERVEROVÉ KATEGORIE VKLADŮ
+Přidány booleany AllowedDeposits, výchozí povolené Tools/Food/Medicine/Ammo/Barter.
+Zákaz se uplatňuje při vkladu, dílčím vkladu a slučování směrem do skladu.
+Výběry, dílčí výběry a slučování při vyzvednutí nejsou omezené kategoriemi.
+Celé stromy zbraní/kontejnerů se ukládají jako ChildrenJson a převádějí
+přes journal s předchozím a následným stavem každého uzlu.
+Test-CategoryRuntime.ps1 prošel: kompletní zbraň a kontejner, delta profilu,
+vklad části munice, restart s vypnutými kategoriemi, zachování skladu,
+odmítnutí vkladu i slučování, plný/dílčí/slučovací výběr a zachování potomků.
+Obnova journalu kompletní zbraně prošla ve 4 případech: vklad/výběr před/po
+uložení profilu, i když jsou všechny kategorie po restartu zakázané.
+Testovací konfigurace, profily a sklad byly obnoveny; testovací server ukončen.
+Přímé ověření nových převodů v herním UI nebylo provedeno.
+
+HEBORIAN 1.8.0 — SKUTEČNÉ ROZMÍSTĚNÍ OSOBNÍHO SKLADU
+Server vrací všechny přímé položky ve skladu, jejich původní souřadnice,
+natočení, rozměry sestaveného předmětu, strom potomků a příznak transferable.
+Rozměry skladu přebírá z původní metody SPT včetně bonusových řádků.
+Klient používá původní souřadnice místo kompaktního balení do 8 sloupců.
+Nepřenosné položky mají alpha 0.35 a blokovaný klik, drag i merge target.
+Izolovaný HTTP test Test-StashSnapshot.ps1 prošel: počet všech kořenových
+položek, souřadnice, rozměry skladu, otočený Beta kontejner 2×3 s vnořenou
+municí, absence duplicitních vnořených položek, odmítnutí nepovoleného vkladu.
+Testovací profil a stav byly obnoveny, testovací server zastaven.
+Build a verify.ps1 prošly. Vykreslení nových typů položek a vzhled ve hře
+nebyly přímo ověřeny; klientský build ověřuje vazbu na FlatItemsToTree.
+Pro nová data protokolu je nutné aktualizovat server i klienta.
+
+HEBORIAN 1.7.5 — SYNCHRONIZACE ÚCHYTU PŘI TAHU
+ScrollRect je při přetahování vypnutý, proto neběží jeho LateUpdate.
+Klient nyní při každé aktualizaci tahu nastavuje velikost i hodnotu obou
+posuvníků podle viewportu, výšky obsahu a aktuálního posunu. Hodnota je
+1 nahoře, 0 dole, bez zpětného vyvolání událostí (SetValueWithoutNotify).
+Oprava pokrývá kolečko i automatické rolování u okrajů.
+Sestavení a stávající verify.ps1 prošly (verification-1.7.5.log).
+Přímé ověření pohybu úchytu v běžící hře nebylo provedeno.
+
+HEBORIAN 1.7.4 — POSOUVÁNÍ PŘI PŘETAHOVÁNÍ
+Obě mřížky se při tahu posouvají v pásmu jedné buňky u horního/dolního
+okraje. Rychlost roste k okraji, maximum 6 buněk/s. Unscaled delta time,
+strop 50 ms, pouze jednou za frame; clamp na skutečný rozsah obsahu.
+Náhled cíle se přepočítá po posunu. Osobní virtualizace zachovává zdroj
+tahu mimo obraz a odpojuje highlight před recyklací položek.
+Build a stávající verify.ps1 prošly: test-results/verification-1.7.4.log.
+Interakce a automatické rolování v Unity nebyly přímo otestovány.
+Ruční ověření: držet předmět u obou okrajů v obou mřížkách, zastavit
+uprostřed/mimo mřížku, dosáhnout posledního řádku, otočit a pustit předmět,
+odrolovat osobní zdroj mimo obraz a zkusit spojení s nově viditelnou hromádkou.
+
+HEBORIAN 1.7.3 — VYUŽITÍ VÝŠKY INVENTÁŘŮ
+Odstraněna rezervace 92 jednotek pro původní patičku. Obě mřížky i jejich
+posuvníky končí 8 jednotek nad spodním okrajem contentu, který již vynechává
+herní lištu. REFRESH přesunut vedle YOUR STASH, chyby vedle levého nadpisu.
+Velikost buněk, úložiště a převody se nemění.
+Build a verify.ps1 prošly; záznam test-results/verification-1.7.3.log.
+Vzhled a ovládání v běžící hře nebyly ověřeny.
+
+HEBORIAN 1.7.2 — SJEDNOCENÍ A ZJEDNODUŠENÍ UI
+Oba nadpisy používají společnou metodu Header: 300×30, stejná barva,
+18bodový tučný font a odsazení. Pravý text je pouze YOUR STASH.
+Odstraněn výběrový převodní button, nápovědy, popis kategorií a běžné
+stavové texty. Chyby a REFRESH zůstávají. Přetahování beze změny.
+Sestavení a verify.ps1 prošly (verification-1.7.2.log).
+Vizuální kontrola v běžící hře nebyla provedena.
+
+HEBORIAN 1.7.1 — POSUVNÍKY A SKLAD 16 × 32
+Opravená příčina přerostlého úchytu: Scrollbar.UpdateVisuals řídí jeho
+výšku pomocí anchorMin/anchorMax, ale původní sizeDelta přidávala dalších
+480 jednotek. Handle nyní používá nulové offsety a středový pivot, bez
+pevné přídavné velikosti. Track i úchyt mají šířku 14 místo 5 jednotek.
+Track končí s viewportem; oprava je společná pro levý i pravý inventář.
+Komunitní obsah má 16 sloupců a 32 řádků. Osobní přehled se neprodlužuje
+kvůli této změně. Titulek i protokol používají sdílené rozměry.
+Sestavení a verify.ps1 prošly: zachování starších dat, kapacita 512 buněk,
+hranice včetně posledního řádku a náhledy. Izolovaný HTTP test prošel pro
+rozměry 16×32, poslední roh (15,31), odmítnutí neplatného sloupce a slučování.
+Testovací server ukončen, testovací profily a sklad obnoveny.
+Uchopení posuvníku a vzhled v běžící hře zatím nebyly ověřeny.
+Živé soubory ani inventáře se neměnily; aktualizovat server i klienta.
+
+HEBORIAN 1.7.0 — ROZŠÍŘENÍ A ROZLOŽENÍ SKLADU 16 × 16
+Sdílené konstanty WarehouseDimensions řídí serverové rozměry, kolize,
+automatické umístění, načítání dat a klientskou kontrolu protokolu/náhledu.
+Schema 1 zůstává: původní položky 8×8 se načtou bez migrace či přemístění.
+Klientský panel je ukotven vlevo nahoře (8 jednotek okraj), pod nadpisem
+začíná 16sloupcová mřížka. Osobní přehled zůstává napravo široký 8 sloupců.
+Výška viewportů reaguje na dostupný prostor; sklad má nezávislý posuvník
+a masku. Kolečko posouvá společný sklad i během přetahování, jednou za frame.
+Souřadnice dropu se dál převádějí do posunutého obsahu; hit test kontroluje
+viditelný viewport. Osobní virtualizace zohledňuje aktuální výšku viewportu.
+Nativní rozteč se zachovává při dostatečné šířce, úzká okna škálují oba panely.
+
+OVĚŘENO: sestavení a verify.ps1; starý 8×8 stav, zachování dat, nová kapacita,
+obsazený sklad, hranice/kolize/rotace a poslední políčko po opětovném načtení.
+Izolovaný HTTP test ověřil rozměry 16×16, přesun do (15,15), odmítnutí (16,15),
+spojování mezi sklady, limity, revize/replay a souběžné hráče bez ztráty kusů.
+Testovací server ukončen, testovací profily a sklad obnoveny.
+Vizuální rozložení a scrolling v běžící Unity hře nebyly ověřeny.
+Živá instalace, profily a sklad nebyly měněny. Instalujte server i klienta 1.7.0.
+
+HEBORIAN 1.6.2 — DVĚ SAMOSTATNÉ IKONY BĚHEM TAHU
+Zdrojový native view dočasně vypíná všechny Graphic kromě MainImage.
+Původní enabled stavy se uchovají a obnoví při CancelDrag i Dispose,
+před vrácením prefabů do poolu. Ikona a její asynchronní načítání zůstávají.
+Hit test cílové položky nyní zahrnuje i samotný zdroj. CanMerge odmítá
+stejné ID, takže zdroj zobrazí červený náhled a EndDrag neodešle operaci.
+Sestavení a verify.ps1 prošly, včetně kontroly odmítnutí self-merge.
+Vzhled přímo ve hře nebyl ověřen. Server ani živá instalace se neměnily.
+
+HEBORIAN 1.6.1 — PŘETAHOVÁNÍ SAMOTNÉ IKONY
+Zdrojový GridItemView zůstává ve svém rodiči, pozici, rozměru a orientaci.
+Samostatný Image pod kurzorem kopíruje pouze MainImage: sprite, materiál,
+barvu, poměr stran a velikost přepočítanou do měřítka panelu. Neklonuje
+skripty, pozadí, rámeček, texty ani indikátory. Raycast je vypnutý.
+Sprite se obnovuje během tahu kvůli asynchronnímu načítání ikony v EFT.
+R mění pouze přetahovaný obrázek a cílový půdorys, nikoli původní položku.
+CancelDrag při puštění, zrušení nebo zavření panelu odstraní pouze kopii.
+Původní položku následně obnoví potvrzený snapshot serveru.
+Build a verify.ps1 prošly včetně vazby ItemView.MainImage v SPT 4.1.6.
+Vizuální ověření v Unity nebylo provedeno. Serverová logika se neměnila;
+nové HTTP testy nebyly potřeba. Živá instalace ani inventáře se neměnily.
+
+HEBORIAN 1.6.0 — SPOJOVÁNÍ HROMÁDEK
+Přetažení na kompatibilní položku odešle její ID a vlastnictví serveru.
+Server pod stejným zámkem ověří revizi, replay, vlastníka, způsobilost,
+typ, veškerý upd stav kromě počtu a maximální velikost hromádky.
+Chybějící/false SpawnedInSession se považují za stejný non-FIR stav.
+Přesune se minimum z požadovaného počtu a volné kapacity cíle.
+Zbytek zůstane ve zdroji; vyčerpaný zdroj se odstraní. ID cíle zůstává.
+Před změnou profilu se uloží merge journal s before/after obrazy profilu
+ a přesnými změnami komunitního skladu. Obnova je idempotentní.
+
+OVĚŘENO:
+- build.ps1 a verify.ps1 proti instalaci SPT 4.1.6;
+- testy kompatibility/FIR, kapacity, množství, náhledu a journalu;
+- Test-MergeRuntime na izolovaném serveru 6975: společný/společný,
+  osobní/společný, společný/osobní, osobní/osobní, zvolený počet,
+  zachování přebytku, odstranění zdroje, profilová delta, replay/stará revize,
+  odmítnutí FIR rozdílu, self-merge a neplatných počtů;
+- dva souběžné pokusy ze dvou profilů: právě jeden commit, zachovaný součet;
+- Test-MergeRecovery: čtyři restarty, vklad/výběr před a po uložení profilu,
+  přesná množství/ID a právě jeden commit po obnově.
+Testovací server ukončen a kopie profilů/skladu obnoveny.
+Živé DLL, profily a sklad nebyly upraveny. UI přetažení v Unity neověřeno.
+
+HEBORIAN 1.5.5 — VYCENTROVÁNÍ PŘETAHOVANÉHO PŘEDMĚTU
+BeginDrag nastaví offset kurzoru na polovinu šířky a výšky předmětu.
+Po otočení se střed přepočítá ze změněných rozměrů. Místo původního kliknutí
+nemá vliv na polohu přetahovaného obrázku ani cílovou buňku.
+Pevný index středové buňky zachovává stabilní náhled z verze 1.5.3.
+U sudého počtu buněk je střed na hraně; používá se pravá/dolní buňka.
+Sestavení a verify.ps1 prošly, včetně dosavadních kontrol náhledu,
+rotace, kolizí a přesunů. Vizuální ověření v běžící hře zbývá provést.
+Serverová logika, živé DLL, profily a obsah skladu se neměnily.
+
+HEBORIAN 1.5.4 — OPRAVA OTEVŘENÍ SPLIT STACK
+Potvrzená příčina z klientského errors.log z 2026-10-15 22:42:42:
+InvalidOperationException: Native split dialog unavailable.
+Původní hledání vyžadovalo existující SplitDialog ve scéně. EFT jej však
+vytváří až při prvním použití ItemUiContext.SplitDialog. Nyní klonujeme
+přímo _splitDialogTemplate z ItemUiContext.Instance do vlastní modální vrstvy.
+Původní dialog hry se nevytváří, nepřesouvá a jeho callbacky se nemění.
+Serverová logika částečných převodů zůstává stejná.
+Sestavení a verify.ps1 prošly, včetně nové kontroly skutečné herní šablony
+v instalované Assembly-CSharp.dll a dosavadních testů dělení/recovery.
+Opravené okno nebylo ověřeno v běžící hře. Živá instalace nebyla přepsána.
+
+HEBORIAN 1.5.3 — STABILNÍ CÍLOVÁ BUŇKA PŘI PŘETAHOVÁNÍ
+Cíl se počítá z kurzoru v lokálních souřadnicích společné mřížky pomocí
+Floor, nikoli zaokrouhlením levého horního rohu přetahovaného obrázku.
+U větších předmětů se uchová index uchopené buňky a při R se prohodí osy.
+Náhled i odeslaný požadavek používají stejné výsledné souřadnice.
+Sestavení a verify.ps1 prošly. Nové regresní testy pokrývají body uvnitř
+buňky poblíž všech hran, překročení hranic, různé rozteče, větší předměty,
+otočené uchopení a vnější okraje mřížky. Dosavadní kontroly rovněž prošly.
+Ovládání v běžící hře nebylo ověřeno; nové HTTP testy se nespouštěly.
+Serverová logika převodů, živá instalace, profily a sklad se neměnily.
+
+HEBORIAN 1.5.2 — FOUND IN RAID INDICATOR
+Uses native QuestItemViewPanel sprite and placement with deserialized MarkedAsSpawnedInSession.
+Detached ItemController normally hides this panel. Non-FIR views stay hidden.
+Restores borrowed sprite/label state on disposal; no inventory state changes.
+Build and verify.ps1 checked against installed SPT 4.1.6. Visual in-game verification pending.
+No new HTTP test: server transfer logic unchanged. No tooltip or quest highlighting added.
+
+HEBORIAN 1.5.1 — ČTVERCOVÉ PŘEDMĚTY BEZ OTÁČENÍ
+Sestavení obou DLL a verify.ps1 prošly proti instalaci SPT 4.1.6.
+Nové regresní testy ověřily 1×1, 2×2 a 3×3: požadavek na změnu orientace
+se ignoruje, přesunutí a data zůstávají správné i po opětovném načtení.
+Původní testy otáčení obdélníků, kolizí a hranic skladu také prošly.
+Klient ignoruje R, pokud se šířka rovná výšce. Server ignoruje otočení při
+vkladu a dělení čtverců; při přesunu zachová i orientaci starších uložených
+položek. Existující sklad se nemigruje ani nepřepisuje.
+Nové HTTP testy ani ovládání v běžící hře nebyly v této verzi provedeny.
+Živé DLL a profily zůstaly beze změny. Výsledek je v instalačním ZIPu.
+
+HEBORIAN 1.5.0 — ČÁSTEČNÉ PŘEVODY A DĚLENÍ
+Sestavení a verify.ps1 prošly proti instalaci SPT 4.1.6.
+Nové testy WarehouseStore: dělení do nového ID, zbytek původní hromádky,
+obnova journalu, zachování množství a nedotčená historie.
+Izolované HTTP testy se dvěma profily ověřily částečný vklad, výběr,
+rozdělení ve společném skladu, správnou changed-item deltu pro zbytek
+v osobním skladu, unikátní ID, nulové/záporné/nadměrné množství, replay,
+překryv zdrojové hromádky a dva současné částečné výběry. Součet kusů
+na obou profilech a ve skladu se zachoval a prošel vždy právě jeden
+ze souběžných požadavků se stejnou revizí.
+Test-SplitRecovery.ps1 restartoval skutečný izolovaný SPT server pro
+částečný vklad i výběr, vždy před uložením profilu a po jeho uložení.
+Všechny čtyři případy obnovily přesné množství a ID bez opakovaného odečtu.
+Testovací data a profily jsou kopie; procesy ukončeny, živé DLL se neměnily.
+
+Klient klonuje nativní EFT.UI.SplitDialog, který řídí pouze potvrzení počtu;
+žádnou nativní inventory split operaci proti profilu sám nevolá. Modální
+vrstva blokuje okolní obsah. Escape zavře dialog, Enter potvrdí. Po dobu
+otevření je pozastavené aplikování snapshotů. Zavření tabu odstraní dialog.
+NEOVĚŘENO V UNITY: Ctrl + drag, vykreslení klonu, focus číselného pole,
+slider, Enter/Escape a opakované otevření dialogu. Kompilace není UI test.
+Logy: verification-1.5.0.log, runtime-1.5.0.log, recovery-1.5.0.log.
+
+HISTORIE:
+HEBORIAN 1.4.4 — MĚŘÍTKO INVENTÁŘE
+Z místní Assembly-CSharp.dll ověřeno GetCellPixelSize: n * 63 + 1.
+Původní panel používal min(width/1280,height/800), což jej na větším
+rozlišení zvětšovalo. Nový strop je nativní rozteč / návrhových 60 jednotek.
+NativeWarehouseItem používá stejnou rozteč: při plné nativní velikosti je
+součin měřítek panelu a předmětu přesně 1. Originální Canvas scale se dědí.
+Na malé obrazovce platí zmenšení do dostupné plochy; UI nesmí přesahovat.
+Serverové transakce se nemění. HTTP testy neopakovány, relevantní jsou
+předchozí testy 1.4.3. Sestavení a verify.ps1 prošly.
+NEOVĚŘENO: přímé vizuální porovnání rozměrů v běžící hře. Balíček není
+automaticky nasazen. Originální soubory hry a živé profily se nemění.
+
+HISTORIE:
+HEBORIAN 1.4.3 — OTÁČENÍ PŘI PŘETAHOVÁNÍ
+Sestavení a verify.ps1 prošly. Nové store testy: prohození rozměrů,
+překrytí vlastních polí, odmítnutí rotace do souseda/mimo okraj, zachování
+stavu po odmítnutí, historie, načtení orientace ze souboru a otočení zpět.
+Skutečný izolovaný SPT server: orientace viditelná druhému profilu,
+nezměněný stav předmětu i osobního inventáře, souběžný přesun/výběr,
+vložení obdélníkového předmětu otočeného a následný výběr. Vše prošlo.
+Při opakování testů se naplnily staré testovací profily; jejich kopie byly
+zálohovány a zmenšeny pro volnou kapacitu, následný kompletní běh prošel.
+Živé profily ani instalované DLL se neměnily. Testovací server byl ukončen.
+Nativní ItemView.ItemRotation mění ikonu i rozměry dle skutečné herní DLL.
+Klient hlídá nejvýše jedno přepnutí za frame a obnoví view při zrušení.
+NEOVĚŘENO: stisk R a vykreslení otočené položky v běžící Unity hře.
+Logy: test-results/verification-1.4.3.log a runtime-1.4.3.log.
+
+HISTORIE:
+HEBORIAN 1.4.2 — TEXTURA BUNĚK A KOMPAKTNÍ UI
+Sestavení proti místním knihovnám SPT 4.1.6 prošlo. verify.ps1 ověřuje
+stávající klientské a serverové kontroly a instalační balíček. Dodaná PNG
+je kopírována beze změny do klientských assets a zahrnuta do instalačního
+ZIPu. Opakování přes RawImage UV 8 x rows zachovává jednu texturu na buňku,
+nezávisle na počtu řádků. Pozadí ani dekorativní rámečky nezachytávají vstup.
+Texturu vlastní ModuleAssets a uvolňuje ji po odstranění UI modulu.
+Serverový protokol a transakce se nemění; HTTP testy z 1.4.1 se neopakovaly.
+Neprovedeno: vizuální ověření textury, typografie a hover stavů v živé Unity.
+Aktualizace nebyla automaticky nasazena do živé instalace.
+
+HISTORIE:
+HEBORIAN 1.4.1 — ORGANIZACE SPOLEČNÉHO SKLADU
+Ověřeno 2026-10-15:
+- obě sestavení a verify.ps1 prošly;
+- přesun na volnou pozici, překryv vlastních původních polí, odmítnutí
+  cizího obsazeného pole a neplatných hranic, zachování historie,
+  odmítnutí replay a načtení nové pozice ze souboru;
+- skutečný izolovaný SPT server: přesun druhým členem, nezměněné oba
+  osobní inventáře i stav předmětu, odmítnutí staré revize, replay,
+  neplatných/chybějících souřadnic;
+- souběžný přesun a výběr stejné položky: jediná potvrzená operace,
+  přesně jeden vlastník; běžné vklady a výběry dál fungují.
+Logy: verification-1.4.1.log a runtime-1.4.1.log v test-results.
+Testovací server ukončen, živá instalace a profily beze změn.
+Známé OOB zprávy se týkají kopie rozšířeného osobního skladu bez SVM
+v testovacím serveru, stejně jako v předchozí verzi. Testy prošly.
+Uživatel potvrdil nativní zobrazení 1.4.0. Nové gesto přemístění 1.4.1
+nebylo přímo ve hře vizuálně ověřeno.
+
+NÁSLEDUJE HISTORIE.
+HEBORIAN 1.4.0 — nativní item views a přenosy mezi mřížkami
+
+Ověření 2026-10-15:
+- sestavení serveru i klienta proti místní instalaci SPT 4.1.6;
+- verify.ps1: konfigurace, lokalizace, klientský host a životní cyklus,
+  skladový žurnál, kapacita, restart a odmítnutí vadných dat;
+- nové testy explicitního umístění: obsazení, překryv, přesah, záporné
+  a extrémní souřadnice; zvolená pozice přetrvá načtení ze souboru;
+- klientský algoritmus rozložení 150 různě velkých položek bez překryvů,
+  hranice osmi sloupců a náhled platnosti cílového pole;
+- skutečné HTTP operace v izolované kopii SPT.Server na 127.0.0.1:6975:
+  zachování upd pro nativní zobrazení, vložení na vybrané místo, odmítnutí
+  obsazených/neúplných/extrémních souřadnic bez změny vlastnictví a revize,
+  výběr druhým profilem, souběžné výběry s právě jedním vlastníkem,
+  odmítnutí staré revize a opakovaného requestId;
+- testovací server byl po testu ukončen. Test používal kopie profilů.
+  Kopie velkého osobního skladu hlásí známé SPT upozornění na rozměry,
+  protože testovací server neobsahuje SVM rozšíření skladu; testy prošly.
+
+Klient používá originální GridItemView z poolu grid_layout a ItemFactory.
+Modely i ItemController jsou oddělené snapshoty, nikoli živé položky profilu.
+Nativním grafikám se dočasně vypne raycast; gesta zachytí vlastní obal.
+Při uvolnění se raycast/layer obnoví a Kill vrátí pohled do nativního poolu.
+Osobní mřížka vykresluje pouze viditelné řádky s rezervou. Během přetahování
+se nepřepisuje snapshot ani nerecyklují views. Server potvrzuje každou změnu.
+
+NEOVĚŘENO V ŽIVÉ UNITY HŘE: vzhled prefabů, clipping/scroll, drag gesture,
+Ctrl + kliknutí, tooltipy a znovuotevření po recyklaci. Kompilace a kontrola
+API nejsou náhradou tohoto testu. Okolní grid/panel je vlastní UI, nikoli
+celý nativní GridView; nativní kontextové menu/rotace/split nejsou součástí.
+Uživatel potvrdil vizuální funkčnost a sdílení předchozí verze 1.3.2.
+Nový balíček nebyl automaticky nainstalován do hry ani do živého serveru.
+Původní soubory hry a profily nebyly upraveny.
+
+Logy: test-results/verification-1.4.0.log a runtime-1.4.0.log.
+Známá CS1701 upozornění jsou ze starých referencí BepInEx/Harmony.
+
+NÁSLEDUJÍ HISTORICKÉ ZÁZNAMY PŘEDCHOZÍCH VERZÍ.
+HEBORIAN 1.3.2 — přímé napojení obsahu na obrazovku
+
+Uživatel potvrdil, že ani 1.3.1 nevykresluje obsah. Aktuální BepInEx log
+potvrzuje Heborian.Client 1.3.1, načtení obou modulů a čtyři otevření obrazovky.
+Záznam o vytvoření Canvas skladu ani o chybě konstrukce v něm není; ani
+Player.log neobsahuje výjimku skladu. Hypotéza 1.3.1 o samotném překrytí IMGUI
+nebyla dostatečným vysvětlením. Přesný osud původního startup GameObjectu
+není z uložených logů doložitelný.
+
+WarehouseController je nyní obyčejný spravovaný objekt, nikoli MonoBehaviour
+na samostatném DontDestroyOnLoad objektu vytvořeném při startu BepInEx.
+WarehouseClientModule se registruje do životního cyklu obrazovky.
+HeborianMenuView.Open synchronně vyvolá vytvoření UI a první tick; LateUpdate
+otevřené obrazovky řídí další tick; zavření uklidí obsah. Jiný aktivní pohled
+se nejdřív uzavře. Stavový text obrazovky hlásí chybějící/selhaný obsah.
+Chyby jednotlivých odběratelů jsou oddělené, logované a neblokují BACK.
+Canvas UI z 1.3.1 zůstává, serverový protokol a transakce se nemění.
+
+Ověření 2026-10-15:
+- build obou DLL proti instalovaným SPT 4.1.6 a BepInEx 5;
+- verify.ps1 prošel včetně všech dosavadních testů a kontrol balíčku;
+- nový test skutečného MenuContentLifecycle z klientské DLL ověřuje:
+  synchronní vytvoření při Open bez Unity startup scény, opakované Open,
+  aktualizace pouze při otevření, jednorázové Close, odhlášení odběratelů,
+  izolaci chyby odběratele, omezení opakovaného logování a znovuotevření;
+- 34 locale/cache testů, konfigurace, klientský host, skladový žurnál,
+  kapacita, restart a odmítnutí vadných dat prošly;
+- původní lokalizační soubory mají nezměněné SHA-256;
+- známá upozornění CS1701 souvisejí s referencemi BepInEx/Harmony.
+
+Neověřeno: živé vykreslení/klikání v Unity a konkrétní příčina nevolaného
+původního Update. Testy životního cyklu nejsou vizuálním testem hry.
+Balíček nebyl automaticky nasazen do uživatelovy instalace. Při prvním
+herním testu ověřit také BACK, druhé otevření a přechod na jiný nativní tab.
+
+NÁSLEDUJE ZÁZNAM PŘEDCHOZÍ VERZE.
+
+HEBORIAN 1.3.1 — oprava neviditelného skladu
+
+Diagnostika: BepInEx/LogOutput.log potvrzuje načtení Heborian.Client 1.3.0,
+HeborianMenu a CommunityWarehouse bez chyby při inicializaci. Uživatelský
+snímek ukazuje funkční panel/BACK, ale žádné IMGUI ovládání. Sklad byl kreslen
+mimo Canvas panelu; přesnou renderovací příčinu v běžící hře nebylo možné změřit.
+
+Oprava nahrazuje OnGUI rozhraním Unity UI/TextMeshPro přímo pod Content
+existujícího panelu a ve stejném Canvas/raycasteru. Statická mřížka a ovládání
+nečekají na serverovou odpověď. Chyby připojení mají textový stav a logování.
+Vytvoření Canvas UI se jednou zapíše do BepInEx logu. Původní závislost na
+UnityEngine.IMGUIModule již není potřeba. Protokol a transakce skladu beze změn.
+
+Ověřeno 2026-10-15:
+- build.ps1 -UseBundledCompiler: obě sestavení proti místním SPT 4.1.6/BepInEx 5;
+- verify.ps1: všechny existující kontroly prošly, včetně 34 locale/cache případů,
+  konfigurace, žurnálu skladu, restartu, plné kapacity a odmítnutí vadných dat;
+- klientská modularita, úklid, asset paths, verze, reference a nativní menu ABI;
+- verze 1.3.1 v obou DLL, banneru a instalačním balíčku;
+- původní lokalizační soubory nezměněny (SHA-256).
+Známé build warnings CS1701 z BepInEx/Harmony mscorlib 2.0 -> Unity 4.0.
+
+Neprovedeno: vizuální test nové UI vrstvy ani klikání v běžícím Unity klientu.
+Předchozí izolované HTTP/transakční testy serveru jsou uvedeny níže; v této
+verzi se neopakovaly, protože serverové transakce se neměnily.
+Žádná aktualizace nebyla automaticky nasazena do aktivní hry/serveru.
+Po instalaci: ověřit banner 1.3.1, otevřít HEBORIAN, viditelnost 8 × 8 mřížky,
+výběr položky, posun seznamu a BACK/Escape; pak jeden vklad/výběr běžné položky.
+
+NÁSLEDUJE ZÁZNAM PŘEDCHOZÍ VERZE.
+
+HEBORIAN 1.3.0 — komunitní sklad, prototyp
+
+Build proti skutečným lokálním knihovnám SPT 4.1.6 a BepInEx 5 prošel.
+verify.ps1: původní kontroly banneru/konfigurace/klienta i nové testy skladu
+prošly (umístění, plný sklad, žurnál, restart, opakování, vadný soubor).
+
+Skutečný SPT.Server běžel pouze v test-results/warehouse-runtime na 127.0.0.1:6975.
+Dva testovací profily byly kopiemi; aktivní hra, server ani originální profily
+nebyly měněny. Každý testovací proces byl ukončen v bloku finally.
+Ověřeno přes HTTP a standardní /client/game/profile/items/moving:
+- načtení modulu a GET se session profilem;
+- vklad a výběr druhým profilem, stejný item ID i původní stav;
+- odpověď obsahuje nativní del/new profilové delty;
+- dva skutečně současné výběry: jediný vítěz a právě jeden vlastník;
+- stará revize a opakovaný requestId nemění sklad;
+- restart s připraveným žurnálem před úpravou profilu dokončí vklad;
+- restart s již uloženým cílovým předmětem dokončí výběr bez duplikace;
+- další restart zachová jediného vlastníka a prázdný Pending.
+
+Testovací kopie neobsahuje SVM. U profilu převzatého z instalace se zvětšeným
+skladem SPT hlásil existující položky mimo základní rozměry při hledání místa.
+Prototyp pro výběr používá rozměry šablony skladu serveru (včetně změn modů
+na tomto serveru); dodatečné bonusové řádky bez změny šablony nevyužívá.
+
+Omezení: žádný živý test klikání v Unity ani test dvou skutečných klientů.
+IMGUI prototyp ukazuje názvy/počty v mřížce, nikoli nativní item ikony.
+Používejte jeden klient na profil; klany/role ani samostatné přihlašování
+nejsou součástí verze. Přístup používá session mechanismus SPT.
+Testy simulují přerušení mezi trvalými zápisy, ne fyzický výpadek disku.
+
+NÁSLEDUJÍ HISTORICKÉ ZÁZNAMY.
+
+HEBORIAN 1.2.3 — výběr záložky a vlastní ikona
+
+Při otevření se uloží původní výběr a nativní toggles se vypnou bez eventů.
+Dočasné allowSwitchOff umožní zhasnout i poslední toggle nativní skupiny.
+BACK obnovuje uložený výběr, nativní navigace jej neobnovuje; výběr nové
+obrazovky řídí hra. LateUpdate během otevření potlačí pozdní asynchronní
+zvýraznění původní obrazovky. Animace jsou aktualizovány spolu se stavem.
+
+Dodaný PNG se načítá modulem jako textura/sprite a nahrazuje nativní ikonu
+v klonu Character. Originální PNG zůstává beze změny a je přibalen v obou ZIPech.
+Sprite uklízí modul, texturu správce ModuleAssets.
+
+Sestavení a verify.ps1 prošly; živý vzhled a přepínání v Unity nebyly ověřeny.
+Ruční kontrola: CHARACTER/TRADERS -> HEBORIAN (svítí jen HEBORIAN),
+BACK/Escape (svítí původní tab), HEBORIAN -> jiný tab (svítí jen nový tab).
+Ověřte ikonu v obou barevných stavech, zvuk, mezeru a opakované otevření.
+
+NÁSLEDUJÍ HISTORICKÉ ZÁZNAMY.
+
+HEBORIAN 1.2.2 — mezera a zvuk spodní lišty, 15. 10. 2026
+
+Uživatel potvrdil funkční otevření panelu ve verzi 1.2.1.
+Nově vlastní neklikací spacer šířky 10 jednotek UI mezi HEBORIAN a CHARACTER.
+Při změně stavu kliknutím zazní EUISoundType.ButtonBottomBarClick.
+Přesný zvuk ověřen čtením IL MenuTaskBar/CG_Awake.method_0 ve skutečné
+Assembly-CSharp.dll: GUISounds.PlayUISound, enum hodnota 2.
+Volání přes Comfort.Common.Singleton respektuje herní zvukové nastavení.
+Při programovém zavření se event nevyvolává, nevzniká dodatečný zvuk.
+
+Obě části sestaveny proti knihovnám instalace; verify.ps1 kompletně prošel.
+Comfort.dll slouží jen jako reference, není součástí instalačního ZIPu.
+Aktivní instalace ani originální soubory hry nebyly přepsány.
+Vzhled mezery a poslech zvuku 1.2.2 vyžadují ověření ve hře po instalaci.
+
+NÁSLEDUJÍ HISTORICKÉ ZÁZNAMY.
+
+HEBORIAN 1.2.1 — oprava tlačítka menu, 15. 10. 2026
+
+LogOutput.log verze 1.2.0 opakovaně hlásil při kliknutí:
+[HeborianMenu] Unable to open screen: Game input tree unavailable.
+Klikací posluchač fungoval, otevření rušilo neúspěšné FindObjectOfType.
+Nová implementace vyhledává i skryté objekty přes Resources a vybírá strom
+z cíle delegátu aktivního InputManageru, případně jeho přidružený InputTree.
+Běžné FindObjectOfType se již pro připojení ovládání nepoužívá.
+
+Tlačítko klonuje CHARACTER, používá HEBORIAN a je vloženo před CHARACTER
+do stejného rodiče s nativním rozložením. Handbook zůstává podmínkou
+přístupnosti, aby Character dostupný v raidu neotevíral vlastní obrazovku.
+
+Obě DLL sestaveny proti instalovaným knihovnám. verify.ps1 prošel:
+34 locale/cache případů, konfigurace a izolace modulů, SHA-256 originálních
+lokalizací, metadata klienta/Mono reference, shoda verzí a struktura ZIPu.
+Rozšířená kontrola skutečné Assembly-CSharp ověřuje Character enum,
+InputTree.InputManager, InputManager.TranslateDelegate a jeho vazbu v Awake.
+
+Živé otevření a vzhled 1.2.1 nebyly v Unity otestovány. Hra ani server nebyly
+spouštěny ani ukončovány. Aktivní instalace nebyla přepsána.
+Po instalaci ověřte: HEBORIAN nalevo od CHARACTER, otevření prázdného panelu,
+BACK a Escape, opakované otevření, přechod na původní tab, jiné rozlišení.
+Banner nyní ukazuje Heborian 1.2.1 ze společné konstanty verze.
+
+NÁSLEDUJE HISTORICKÝ ZÁZNAM 1.2.0 (jeho živý test odhalil výše uvedenou chybu).
+
+HEBORIAN 1.2.0 — verze v banneru a vlastní tab, 15. 10. 2026
+
+Sestaveny serverová i klientská DLL proti skutečným knihovnám SPT 4.1.6.
+Klient nově používá instalované Assembly-CSharp, Unity UI, TextMeshPro,
+Sirenix.Serialization a Harmony; žádná z těchto knihoven není přibalena.
+Jediný údaj BuildInfo.Version určuje metadata, banner i názvy ZIPů.
+verify.ps1 prošel včetně 34 jazyk/cache případů s verzí v nadpisu, testů
+konfigurace a izolace modulů, zachování lokalizací podle SHA-256 a kontroly
+shody verzí obou DLL. Nový read-only test ověřuje skutečné typy privátních
+polí lišty, delegátu kliknutí, nativního BACK a API InputTree ve hře.
+
+Nová obrazovka ještě nebyla vizuálně ani klikáním ověřena v živém Unity.
+Uživatelova hra i server běží, nebyly zastaveny, přepsány ani restartovány.
+V tomto vydání nebyl spuštěn žádný další server nebo hra.
+Před instalací ukončete hru/server; rozbalte společný ZIP a znovu spusťte.
+Ruční test: banner Heborian 1.2.0, nový tab vedle Handbook, prázdný panel,
+BACK vpravo nahoře, Escape, opakované otevření/zavření a přechod na původní
+tab bez ztráty jeho funkčnosti. Ověřte také jiné rozlišení a vypnutí modulu
+v [Modules.HeborianMenu] Enabled=false po restartu.
+
+NÁSLEDUJÍ HISTORICKÉ ZÁZNAMY STARŠÍCH VERZÍ.
+
+HEBORIAN 1.1.1 — oprava banneru, ověření 15. 10. 2026
+
+Příčina zjištěna čtením IL původní Assembly-CSharp.dll (soubor neměněn):
+EFT.UI.LocalizedText.UpdateLocale zavolá String.IsNullOrEmpty(_formatTemplate)
+a při true ihned vrací řízení, tedy přeskočí SetLabelText. Prázdný překlad
+proto neodstranil ruský text uložený ve výchozím UI. Nejde o další text Heborianu.
+Oba popisy nyní používají jednu ASCII mezeru, která přepíše původní nápis.
+Změna zůstává výhradně serverovou transformací lokalizace v paměti.
+
+Obě DLL verze 1.1.1 sestaveny; všechny kontroly verify.ps1 prošly, včetně
+34 případů jazyk/cache a nového testu neprázdného, ale vizuálně prázdného
+popisu. Soubory lokalizace na disku zůstaly stejné podle SHA-256.
+Aktuální BepInEx/LogOutput.log potvrzuje skutečné načtení klienta 1.1.0:
+  Loading [Heborian.Client 1.1.0]
+  Heborian.Client 1.1.0 ready for SPT 4.1.6; 0 gameplay/UI modules registered.
+Nový server ani hra nebyly při této opravě spouštěny. Vzhled verze 1.1.1
+zbývá ověřit uživatelem po restartu serveru i hry.
+
+NÁSLEDUJE HISTORICKÝ ZÁZNAM VERZE 1.1.0 Z 12. 10. 2026.
+Jeho test prázdného popisu ověřoval pouze serverová data, nikoliv chování
+LocalizedText ve hře; toto omezení řeší výše uvedená oprava a regresní test.
+
+Prostředí: H:\SPT New, SPT 4.1.6, BepInEx 5.4.23.5, Unity Mono.
+SPT klientské assembly spt-core/spt-common mají verzi 4.1.6.0 a cíl
+.NETStandard 2.1. Server používá .NET 10. Klientské reference byly před
+implementací ověřeny z lokálních assemblies a existujícího BepInEx logu.
+
+SESTAVENÍ — PROŠLO
+Serverová i klientská DLL sestaveny kompilátorem Roslyn z PowerShellu 7.6.5.
+Server používá reference .NET 10/SPT, klient výhradně reference Unity/Mono
+a BepInEx z této instalace. SDK cesta je připravena, ale zde nebyl dostupný
+.NET 10 SDK, takže dotnet build nebyl samostatně proveden.
+Klientské CS1701: existující BepInEx odkazuje na mscorlib 2.0, instalace Unity
+poskytuje 4.0. Nejde o chybu sestavení; testy staršího CLR také prošly.
+
+AUTOMATICKÉ TESTY — PROŠLY
+- 17 skutečných jazykových slovníků, studená i již načtená cache: 34 případů.
+- Nadpis Heborian, oba doplňující texty prázdné, ostatní překlady beze změn.
+- Žádné předčasné načtení, opakovaná inicializace neregistruje transformaci znovu.
+- Vypnutý banner, vlastní nadpis, stabilní konfigurace zachycená při inicializaci.
+- Výchozí konfigurace, načtení existující, zachování souboru, odmítnutí vadného
+  JSON, null a překlepů; odmítnuté soubory se nepřepisují.
+- Server: vypnutí modulu, izolace výjimky, duplicita ID, idempotence, cancellation.
+- Klient: skutečné třídy ConfigFile/ManualLogSource z BepInEx, vypnutí modulu,
+  samostatné sekce, částečné selhání, úklid v opačném pořadí, idempotence,
+  duplicita ID, načtení bajtů prostředku, hranice cest a verze SPT.
+- Metadata pluginu BaseUnityPlugin/BepInDependency; žádná serverová/.NET10
+  reference v klientské DLL.
+- Instalační ZIP obsahuje přesně dvě vlastní DLL ve správných adresářích;
+  neobsahuje knihovny hry/SPT ani config.json/.cfg přepisující nastavení.
+- SHA-256 původních lokalizačních souborů před a po testech je stejný.
+
+SKUTEČNÝ SERVER — PROŠLO
+Dočasná instalace byla načtena nativním SPT.Server.exe:
+  Mód: Heborian.Server verze: 1.1.0 (GUID: local.heborian | targets SPT: =4.1.6)
+  [Heborian.Server] MainMenuBanner: registered for 17 locales.
+  [Heborian.Server] Loaded: MainMenuBanner
+  Spuštěn webserver na https://127.0.0.1:6969
+  Server běží, příjemnou zábavu
+Vedle DLL se vytvořil správný config.json. Ostatní již nainstalované mody
+pokračovaly ve startu. Existující varování prázdné složky Melx-LootValue
+nesouvisí s Heborianem.
+
+SKUTEČNÝ KLIENT — NEPOTVRZENO
+Pokus o technický start EscapeFromTarkov.exe s -batchmode -nographics
+skončil ještě před startem BepInEx. Nový Unity log obsahoval pouze zprávu
+o low integrity mode a cesty Mono. Příčinu ukončení tento log neurčuje.
+Nelze tvrdit, že plugin prošel Awake v živé hře. Starší BepInEx log nebyl
+považován za doklad nového pluginu. Testy klientské infrastruktury běžely
+odděleně ve Windows PowerShell 5.1, nikoliv jako Unity plugin.
+Není ověřen upload PNG/JPEG do živého Unity ani vykreslení nové verze banneru.
+Současná klientská verze žádný obrázek ani UI modul neaktivuje.
+
+RUČNÍ DOKONČENÍ OVĚŘENÍ
+Po instalaci spusťte SPT běžným launcherem. V BepInEx/LogOutput.log musí být
+Loading [Heborian.Client 1.1.0] a Heborian.Client 1.1.0 ready for SPT 4.1.6.
+V hlavním menu potvrďte původní oranžový banner s nadpisem Heborian.
+
+UKONČENÍ TESTŮ
+Dočasně instalované složky byly přesunuty mimo aktivní mods/plugins do
+Heborian/test-results/startup-server a startup-client. Distribuce je hotový
+ZIP, nikoliv trvale instalovaný mod. SHA-256 Assembly-CSharp.dll a BepInEx.dll
+před a po technickém startu shodný. Originální soubory nebyly editovány.
+
+
+
+
+
+
+
+
