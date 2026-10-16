@@ -20,6 +20,28 @@ namespace Heborian.Client.Modules.CommunityWarehouse
         public static float CellPitch => ItemViewFactory.GetCellPixelSize(new IntVec2(2,1)).X
             - ItemViewFactory.GetCellPixelSize(new IntVec2(1,1)).X;
         public GridItemView View { get; private set; }
+        public string SoundKey
+        {
+            get
+            {
+                try { return View?.Item?.ItemSound; }
+                catch(Exception error)
+                {
+                    Debug.LogWarning("[Heborian] Item sound category unavailable: "+error.Message);
+                    return null;
+                }
+            }
+        }
+        public static void PlaySound(string key,EFT.UI.EInventorySoundType type)
+        {
+            // Audio is presentation only: a missing clip/service must never interrupt a transfer.
+            try
+            {
+                if(!string.IsNullOrEmpty(key) && Singleton<EFT.UI.GUISounds>.Instantiated)
+                    Singleton<EFT.UI.GUISounds>.Instance.PlayItemSound(key,type,false);
+            }
+            catch(Exception error) { Debug.LogWarning("[Heborian] Inventory sound unavailable: "+error.Message); }
+        }
         private readonly List<KeyValuePair<Graphic,bool>> raycasts=new List<KeyValuePair<Graphic,bool>>();
         private readonly List<KeyValuePair<GameObject,int>> layers=new List<KeyValuePair<GameObject,int>>();
         private readonly List<KeyValuePair<Graphic,bool>> dragDecorations=new List<KeyValuePair<Graphic,bool>>();

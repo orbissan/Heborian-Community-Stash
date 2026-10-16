@@ -56,6 +56,7 @@ public static class ClientVerification
         Check(Compatibility.IsSupported(new Version("4.1.6")) && Compatibility.IsSupported(new Version("4.1.6.0")), "Supported version rejected");
         Check(!Compatibility.IsSupported(new Version("4.1.7")) && !Compatibility.IsSupported(new Version("4.0.0")), "Unsupported version accepted");
         VerifyMenuContentLifecycle();
+        VerifyItemPresentation();
         VerifyPacking();
         return "PASS: client configuration, enable/disable, isolated failures, duplicate IDs, reverse cleanup, asset paths/bytes and version guard (outside Unity).";
     }
@@ -125,6 +126,25 @@ public static class ClientVerification
         targetAmmo.upd=null; targetAmmo.template="other";
         Check(!WarehousePacking.CanMerge(ammo,targetAmmo) && !WarehousePacking.CanMerge(ammo,ammo),"different item or self merge accepted");
         Console.WriteLine("PASS: merge previews check capacity, template, identity and Found in Raid.");
+    }
+
+    private static void VerifyItemPresentation()
+    {
+        var item=new WarehouseItem {id="root",template="weapon",name="Weapon",x=2,y=3,width=2,height=1,count=1,maxStack=1,
+            transferable=true,upd=Newtonsoft.Json.Linq.JObject.Parse("{\"SpawnedInSession\":true}"),
+            tree=Newtonsoft.Json.Linq.JArray.Parse("[{\"_id\":\"root\"},{\"_id\":\"magazine\",\"upd\":{\"StackObjectsCount\":20}}]")};
+        var serialized=Newtonsoft.Json.JsonConvert.SerializeObject(item);
+        Func<WarehouseItem> copy=()=>Newtonsoft.Json.JsonConvert.DeserializeObject<WarehouseItem>(serialized);
+        Check(WarehouseItemPresentation.Same(item,copy()),"Identical fresh snapshot would rebuild native view");
+        foreach(var change in new Action<WarehouseItem>[] {
+            x=>x.count=2, x=>x.x=5, x=>{x.rotated=true;x.width=1;x.height=2;},
+            x=>x.transferable=false, x=>x.canReceive=true,
+            x=>x.upd["SpawnedInSession"]=false,
+            x=>x.tree[1]["upd"]["StackObjectsCount"]=19,
+            x=>x.tree.RemoveAt(1)
+        }) { var changed=copy();change(changed);Check(!WarehouseItemPresentation.Same(item,changed),"Changed item presentation would remain stale"); }
+        Check(!WarehouseItemPresentation.Same(item,null),"Removed item still considered present");
+        Console.WriteLine("PASS: fresh identical item snapshots retain views; count, position, rotation, permissions, FIR and nested content changes invalidate views.");
     }
 
     private static void VerifyMenuContentLifecycle()

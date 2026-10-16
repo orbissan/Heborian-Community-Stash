@@ -30,7 +30,7 @@ if (!$UseBundledCompiler -and ($sdk | Where-Object { $_ -match '^10\.' })) {
     $helperRefs += "$PSHOME/Microsoft.CodeAnalysis.dll", "$PSHOME/Microsoft.CodeAnalysis.CSharp.dll"
     Add-Type -Path (Join-Path $PSScriptRoot 'tools/Compiler.cs') -ReferencedAssemblies $helperRefs -CompilerOptions '/nowarn:1701'
     $serverRefs = @(Get-ChildItem "$PSHOME/ref/*.dll" | Select-Object -ExpandProperty FullName)
-    foreach ($name in @('SPTarkov.Server.Core', 'SPTarkov.DI', 'SPTarkov.Common', 'SemanticVersioning')) { $serverRefs += Join-Path $runtime "$name.dll" }
+    foreach ($name in @('SPTarkov.Server.Core', 'SPTarkov.DI', 'SPTarkov.Common', 'SemanticVersioning', '0Harmony')) { $serverRefs += Join-Path $runtime "$name.dll" }
     $clientRefs = @('mscorlib','System','System.Core','netstandard','UnityEngine','UnityEngine.CoreModule','UnityEngine.ImageConversionModule','UnityEngine.UI','UnityEngine.UIModule','UnityEngine.InputLegacyModule','Unity.TextMeshPro','Assembly-CSharp','Comfort','Newtonsoft.Json') | ForEach-Object { Join-Path $managed "$_.dll" }
     $clientRefs += Join-Path $SptRoot 'BepInEx/plugins/spt/spt-common.dll'
     $clientRefs += Join-Path $SptRoot 'BepInEx/core/BepInEx.dll'
@@ -42,7 +42,7 @@ if (!$UseBundledCompiler -and ($sdk | Where-Object { $_ -match '^10\.' })) {
     [HeborianBuild.Compiler]::Compile(($serverSources + $shared), $serverRefs, (Join-Path $serverOutput 'Heborian.dll'), '.NETCoreApp,Version=v10.0', $version)
     [HeborianBuild.Compiler]::Compile(($clientSources + $shared), $clientRefs, (Join-Path $clientOutput 'Heborian.Client.dll'), '.NETStandard,Version=v2.1', $version)
 }
-Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'config/server/config.example.json') -Destination $serverOutput -Force
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'docs/CONFIGURATION.md'), (Join-Path $PSScriptRoot 'docs/HISTORY.md') -Destination $serverOutput -Force
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'assets') -Destination $clientOutput -Recurse -Force
 foreach ($destination in @($serverOutput, $clientOutput)) {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'README.txt'), (Join-Path $PSScriptRoot 'LICENSE'), (Join-Path $PSScriptRoot 'THIRD-PARTY-NOTICES.txt') -Destination $destination -Force
@@ -65,7 +65,8 @@ function New-Package([string]$Path, [string]$Base, [string[]]$Files) {
 # Whitelist excludes test data, proprietary libraries and generated user configurations.
 $installFiles = @(
     'SPT_Runtime/user/mods/Heborian/Heborian.dll',
-    'SPT_Runtime/user/mods/Heborian/config.example.json',
+    'SPT_Runtime/user/mods/Heborian/CONFIGURATION.md',
+    'SPT_Runtime/user/mods/Heborian/HISTORY.md',
     'SPT_Runtime/user/mods/Heborian/README.txt',
     'SPT_Runtime/user/mods/Heborian/LICENSE',
     'SPT_Runtime/user/mods/Heborian/THIRD-PARTY-NOTICES.txt',
@@ -73,13 +74,15 @@ $installFiles = @(
     'BepInEx/plugins/Heborian/assets/README.txt',
     'BepInEx/plugins/Heborian/assets/HeborianMenu/icon_heborian_01.png',
     'BepInEx/plugins/Heborian/assets/CommunityWarehouse/cell_full_border.png',
+    'BepInEx/plugins/Heborian/assets/CommunityWarehouse/icon_profile.png',
+    'BepInEx/plugins/Heborian/assets/CommunityWarehouse/icon_stash.png',
     'BepInEx/plugins/Heborian/README.txt',
     'BepInEx/plugins/Heborian/LICENSE',
     'BepInEx/plugins/Heborian/THIRD-PARTY-NOTICES.txt'
 )
 New-Package (Join-Path $dist "Heborian-$version-SPT-4.1.6.zip") $stage $installFiles
 $sourceFiles = @('Heborian.slnx','Directory.Build.props','build.ps1','verify.ps1','README.md','README.txt','CONTRIBUTING.md','.gitignore','.gitattributes','LICENSE','THIRD-PARTY-NOTICES.txt','VALIDATION.txt')
-foreach ($folder in @('src','tests','tools','docs','config','assets','.github')) {
+foreach ($folder in @('src','tests','tools','docs','assets','.github')) {
     $sourceFiles += Get-ChildItem (Join-Path $PSScriptRoot $folder) -File -Recurse | Where-Object { $_.FullName -notmatch '[\\/](obj|bin)[\\/]' } | ForEach-Object { [IO.Path]::GetRelativePath($PSScriptRoot, $_.FullName) }
 }
 New-Package (Join-Path $dist "Heborian-$version-source.zip") $PSScriptRoot $sourceFiles

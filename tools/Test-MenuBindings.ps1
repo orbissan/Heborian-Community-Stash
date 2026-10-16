@@ -4,6 +4,27 @@ $ErrorActionPreference = 'Stop'
 Add-Type -Path (Join-Path $SptRoot 'BepInEx/core/Mono.Cecil.dll')
 $game = [Mono.Cecil.AssemblyDefinition]::ReadAssembly((Join-Path $SptRoot 'EscapeFromTarkov_Data/Managed/Assembly-CSharp.dll'))
 try {
+    $sounds=$game.MainModule.GetType('EFT.UI.GUISounds')
+    if(!($sounds.Methods | Where-Object { $_.Name -eq 'PlayItemSound' -and $_.IsPublic -and $_.Parameters.Count -eq 3 -and $_.Parameters[0].ParameterType.FullName -eq 'System.String' -and $_.Parameters[1].ParameterType.FullName -eq 'EFT.UI.EInventorySoundType' -and $_.Parameters[2].ParameterType.FullName -eq 'System.Boolean' })) { throw 'Native item sound playback binding missing.' }
+    if(!($game.MainModule.GetType('EFT.InventoryLogic.Item').Methods | Where-Object { $_.Name -eq 'get_ItemSound' -and $_.IsPublic })) { throw 'Native item sound category missing.' }
+    $soundTypes=$game.MainModule.GetType('EFT.UI.EInventorySoundType')
+    foreach($name in @('pickup','drop')) {
+        if(!($soundTypes.Fields | Where-Object Name -EQ $name)) { throw "Native $name sound type missing." }
+    }
+    $beginDrag=$game.MainModule.GetType('EFT.UI.DragAndDrop.ItemView').Methods | Where-Object Name -EQ 'OnBeginDrag'
+    if(!($beginDrag.Body.Instructions | Where-Object { "$($_.Operand)" -match 'Item::get_ItemSound' })) { throw 'Native drag sound category source changed.' }
+    Write-Output 'PASS: native per-item pickup/drop sound bindings and original drag category source.'
+    $environment=$game.MainModule.GetType('EFT.UI.EnvironmentUI')
+    if(!($environment.Methods | Where-Object { $_.Name -eq 'get_IsActive' -and $_.IsPublic })) { throw 'Native environment availability binding missing.' }
+    if(($environment.Fields | Where-Object Name -EQ '_isMainScreen').FieldType.FullName -ne 'System.Boolean') { throw 'Native main environment state missing.' }
+    $setMain=$environment.Methods | Where-Object Name -EQ 'SetAsMain'
+    if(!$setMain.IsPublic -or $setMain.Parameters.Count -ne 2) { throw 'Native environment mode switch missing.' }
+    $root=$game.MainModule.GetType('EFT.UI.EnvironmentUIRoot')
+    $mode=$root.Methods | Where-Object Name -EQ 'SetMain'
+    if(!($mode.Body.Instructions | Where-Object { "$($_.Operand)" -match '::MainScreenObjects' })) { throw 'Native secondary mode no longer hides main-menu objects.' }
+    $screen=$game.MainModule.GetType('EFT.UI.Screens.UIScreen')
+    if(!($screen.Methods | Where-Object { $_.Name -eq 'get_CanvasGroup' -and $_.IsPublic })) { throw 'Native screen presentation binding missing.' }
+    Write-Output 'PASS: native environment and screen CanvasGroup bindings for transparent Heborian overlay.'
     $bar = $game.MainModule.GetType('EFT.UI.MenuTaskBar')
     $toggles = $bar.Fields | Where-Object Name -EQ '_toggleButtons'
     if ($toggles.FieldType.FullName -ne 'System.Collections.Generic.Dictionary`2<EFT.UI.EMenuType,EFT.UI.AnimatedToggle>') { throw 'Unexpected taskbar toggle field.' }

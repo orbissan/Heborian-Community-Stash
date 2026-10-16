@@ -9,6 +9,7 @@
     <SptRoot Condition="'$(SptRoot)' == ''">$(MSBuildThisFileDirectory)..\..\..</SptRoot>
   </PropertyGroup>
   <ItemGroup>
+    <Reference Include="0Harmony"><HintPath>$(SptRoot)\SPT_Runtime\0Harmony.dll</HintPath><Private>false</Private></Reference>
     <Compile Include="..\Shared\BuildInfo.cs" Link="BuildInfo.cs" />
     <Compile Include="..\Shared\WarehouseDimensions.cs" Link="WarehouseDimensions.cs" />
     <Reference Include="SPTarkov.Server.Core"><HintPath>$(SptRoot)\SPT_Runtime\SPTarkov.Server.Core.dll</HintPath><Private>false</Private></Reference>

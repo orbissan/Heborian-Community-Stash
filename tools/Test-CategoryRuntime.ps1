@@ -72,7 +72,7 @@ try {
  Check ($weaponView.transferable -and $weaponView.tree.Count -gt 1) 'Assembled weapon not eligible with enabled categories'
  $weaponIds=@($weaponView.tree._id)
  $r=Send 'deposit' $weapon._id $s.revision
- Check (@($r.data.profileChanges.$a.items.del).Count -eq $weaponIds.Count) 'Weapon deletion delta omits attachments'
+ Check (@($r.data.profileChanges.$a.items.del).Count -eq 1 -and $r.data.profileChanges.$a.items.del[0]._id -eq $weapon._id) 'Weapon client delta must delete only the root'
  $s=Read-Spt $a
  Check (($s.items | Where-Object id -eq $weapon._id).tree.Count -eq $weaponIds.Count) 'Weapon tree not stored'
  $null=Send 'deposit' $case._id $s.revision

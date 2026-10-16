@@ -16,7 +16,7 @@ src/Heborian.Client/
   Modules/HeborianMenu/          vlastní tab, prázdná obrazovka, BACK a vstup
 src/Shared/BuildInfo.cs          jediný údaj o verzi, společný pro obě DLL
 Directory.Build.props           načtení verze pro standardní sestavení MSBuild
-config/server/config.example.json
+docs/CONFIGURATION.md
 assets/                         obsah pro BepInEx/plugins/Heborian/assets/
 tests/                          regresní testy obou částí
 tools/                          pomocník pro kompilaci a testy
@@ -36,7 +36,7 @@ serverem a klientem navrhneme až pro konkrétní funkci.
 SERVEROVÝ MODUL
 1. Vytvořte Modules/<Id>/<Id>Module.cs a <Id>Options.cs.
 2. Options obsahuje Enabled=true a vlastní nastavení. Přidejte vlastnost
-   se stejným ID do ServerConfiguration a příklad do config.example.json.
+   se stejným ID do ServerConfiguration a příklad do docs/CONFIGURATION.md.
 3. Implementujte IServerModule. IsEnabled čte pouze svoji sekci konfigurace.
    InitializeAsync nejprve zkontroluje všechna nastavení a potřebná data,
    teprve potom provede úpravy v paměti pomocí příslušných API SPT.

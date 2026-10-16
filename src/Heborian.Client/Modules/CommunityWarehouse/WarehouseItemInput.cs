@@ -10,6 +10,7 @@ namespace Heborian.Client.Modules.CommunityWarehouse
         internal WarehousePanel Panel;
         internal WarehouseItem Data;
         internal bool Personal;
+        internal bool Invalid;
         internal bool Hovered;
         private bool dragged;
         public void OnPointerDown(PointerEventData e) { dragged=false; }

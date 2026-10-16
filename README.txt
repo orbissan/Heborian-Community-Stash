@@ -14,6 +14,7 @@ Open the **HEBORIAN** tab to deposit supplies, withdraw what you need, and organ
 - Drag and drop, item rotation, stack splitting and merging.
 - Familiar item icons, quantities, condition and Found in Raid indicators.
 - Server settings for stash height and allowed deposit categories.
+- Server-backed history of deposits, withdrawals and arrangement changes, with search and paging.
 
 ## Installation
 
@@ -37,9 +38,9 @@ Under `CommunityWarehouse`:
 
 Disabled categories cannot be deposited, but items already stored can still be withdrawn. Reducing the height hides items beyond the new boundary without deleting them; increasing it reveals them again.
 
-Stop the server before editing and restart it afterward. Edit **`config.json`**, not `config.example.json`.
+Stop the server before editing and restart it afterward. Edit **`config.json`**. The installed `CONFIGURATION.md` beside it explains every server setting, defaults and allowed values.
 
-See [all configuration options](docs/CONFIGURATION.md) and the [example configuration](config/server/config.example.json).
+See [all configuration options](docs/CONFIGURATION.md).
 
 ## Backups and support
 
@@ -49,7 +50,13 @@ With the server stopped, back up **`user/mods/Heborian/data` and `user/profiles`
 
 ## Development
 
-Current source version: **1.10.1**.
+Current source version: **1.12.7**.
+
+1.12.7 adds **HISTORY** beside the community stash title. It shows who deposited or withdrew an item, when, and how many. Use **ARRANGEMENT** for moves, rotations, splits and shared-stack merges. See [history settings and storage](docs/HISTORY.md).
+
+1.10.3 speeds up large inventory snapshots and updates changed item views without rebuilding the entire panel. See [performance measurements](docs/PERFORMANCE-1.10.3.md).
+
+See the [1.10.2 stability audit](docs/AUDIT-1.10.2.md) for fixes, verification results and remaining test coverage gaps.
 
 See [building and testing](docs/BUILDING.md) and [contributing](CONTRIBUTING.md). Game and SPT assemblies are not included; build against your own SPT installation.
 

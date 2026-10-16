@@ -1,0 +1,100 @@
+AUDIT PŘED VYDÁNÍM — HEBORIAN 1.12.7
+Datum: 16. 10. 2026
+Cílová instalace: SPT 4.1.6
+
+VÝSLEDEK
+Audit našel a opravil dvě funkční chyby a jeden problém čitelnosti UI.
+Automatické kontroly a izolované integrační testy po opravách prošly.
+Balíček je kandidát na vydání; skutečný Unity klient a souhra s dalšími mody
+vyžadují závěrečnou herní zkoušku. GitHub ani živá instalace nebyly aktualizovány.
+
+1. SOUBĚH INVENTÁŘOVÝCH ODPOVĚDÍ — vysoká závažnost
+Při prvních současných výběrech dvou profilů došlo k NullReferenceException
+po zahájení transakce. Další diagnostika potvrdila souběžné zápisy do běžného
+Dictionary v SPT EventOutputHolder.ResetOutput. Sklad se následně zablokoval.
+Původní chyba je zachycena v release-audit-1.12.6/concurrency-failure-server.log.
+Nebylo prokázáno trvalé zdvojení nebo ztráta předmětů; problém byl v doručení
+odpovědi po změně vlastnictví a následném bezpečnostním zablokování skladu.
+
+Oprava: úzká Harmony ochrana synchronních metod GetOutput, ResetOutput a
+UpdateOutputProperties, se znovuvstupujícím zámkem a uvolněním i při výjimce.
+Používá existující serverovou knihovnu SPT_Runtime/0Harmony.dll; žádné původní
+binární soubory nepřepisuje. Ochrana pokrývá sdílený response holder i pro ostatní
+inventářové operace během běhu serveru se zapnutým modulem.
+Další pojistka odmítne neplatný response objekt před jakoukoliv změnou profilu,
+žurnálu, skladu nebo poplatku. Nenahrazuje chybnou odpověď novým objektem,
+protože SPT callback návratovou hodnotu item routeru v této verzi nepřebírá.
+
+Ověření: finální test má 48 dvojic požadavků zdarma a 48 dvojic s poplatkem,
+celkem 192 API požadavků. V každé dvojici právě jeden úspěch a jedno odmítnutí,
+správný příjemce odpovědi, klientská delta vítěze, jediné vlastnictví položek,
+zachování 480 nábojů a v placené variantě právě jeden poplatek 10 RUB.
+Testuje se normální herní model: jedna probíhající operace na profil.
+Nejde o garanci bezpečnosti libovolných podvržených souběžných požadavků
+ze stejného profilu ani o obecnou opravu všech souběhů v SPT.
+
+2. OBCHÁZENÍ RUČNÍHO ZÁMKU PŘEDMĚTU — střední závažnost
+Verze 1.12.6 dovolila vložit předmět s PinLockState=2. Reprodukce je uložená
+v release-audit-1.12.6/locked-before.log. Původní hra tento stav chápe jako Locked.
+Oprava kontroluje zamčené předměty i obsah kontejnerů při vkladu a zamčené
+osobní hromádky při sloučení. Snapshot nabízí stejné možnosti jako server.
+Existující společné předměty zůstávají dostupné pro výběr.
+Ověřeno: celý vklad, částečný vklad, sloučení, cílová zamčená hromádka,
+peněženka se zamčeným obsahem a následný normální výběr.
+
+3. ČITELNOST CHYBOVÝCH HLÁŠENÍ — nižší závažnost
+Po rozdělení horní lišty zbývalo pro chyby pouze 168 jednotek šířky a písmo
+se mohlo zmenšit až na 8. Důležité zprávy o poplatcích nebo obnově tak mohly
+být špatně čitelné. Zprávy nyní dostávají vlastní řádek přes šířku společného
+skladu; mřížka se při jejich zobrazení posune níže. Bez zprávy se prostor vrátí.
+Kompilace ověřena; výsledný vzhled a přetahování při změně výšky ověřit ve hře.
+
+OPRAVA TESTOVACÍHO NÁSTROJE
+HttpClient původního souběžného testu automaticky ukládal Set-Cookie a mohl
+zaměnit relace obou profilů v dalších kolech. Automatické cookies jsou vypnuté;
+každý požadavek má explicitní relaci a kontroluje se identita odpovědi.
+Za rozhodující se považují nové concurrency-free-responses.log a
+concurrency-paid-responses.log, nikoli starší běhy bez těchto kontrol.
+
+PROVEDENÉ KONTROLY (složka test-results/release-audit-1.12.7)
+- verify.log: konfigurace, neplatné hodnoty, ukládání, selhání zápisu,
+  obnova žurnálu, historie, klientské výpočty, vazby na nativní API,
+  root-only mazání stromů kontejnerů a obsah instalačního ZIPu.
+- Test-LockedRuntime.log: zámky a shoda oprávnění server/snapshot.
+- Test-FeesRuntime.log: RUB/EUR/USD, celé i částečné přesuny a slučování,
+  peníze v peněženkách, nedostatek peněz, opakované požadavky, poplatek
+  100000, nulové/vypnuté poplatky, obnova před/po uložení a opakovaný restart.
+- Test-ContainerRuntime.log: 50 úspěšných kontrol, z toho 48 kombinací
+  typů a naplnění kontejnerů; přesné zachování stromů, zastaralé/neplatné
+  požadavky, regresní scénář prázdná peněženka -> naplnění -> opětovný přesun.
+- Test-CategoryRuntime.log: kategorie, zbraně s příslušenstvím, kontejnery,
+  změna pravidel neblokuje výběr; obnova plných stromů před/po uložení.
+- Test-FoundInRaidRuntime.log: pravidla FIR pro celý obsah, rozdělení a
+  slučování; výběr již uložených předmětů zachován.
+- Test-RowsRuntime.log: zmenšení/obnovení skladu a nepřístupné skryté řádky.
+- Test-LargeStacksRuntime.log: přesné množství při rozdělování milionu RUB,
+  50000 USD/EUR a munice.
+- concurrency-free-responses.log a concurrency-paid-responses.log:
+  skutečně oddělené profily, správné odpovědi, konzervace položek a poplatky.
+- Test-PerformanceRuntime.log: 100, 500, 1500 a 3000 osobních položek.
+  U 3000 položek průměrná odezva čtení přibližně 222 ms, vklad 179 ms
+  a následné čtení 154 ms (3 měření, místní API a testovací data).
+  Tato čísla neměří vykreslování Unity ani uživatelovu síť.
+
+TESTOVACÍ IZOLACE
+Pouze test-results/warehouse-runtime, HTTPS port 6975, kopie profilů.
+Testy obnovily své vstupní profily, konfiguraci a hlavní stav skladu.
+Testovací archiv historie a diagnostické logy zůstávají v testovacím prostoru.
+Živé profily, konfigurace a herní instalace nebyly těmito testy měněny.
+
+PŘED VEŘEJNÝM VYDÁNÍM VYZKOUŠET VE HŘE
+1. Dva skutečné klienty: současný výběr stejného předmětu, s poplatkem i bez.
+   Předmět získá jeden hráč; odmítnutý hráč může po obnově dál manipulovat.
+2. Prázdná i plná peněženka, případně kontejner uvnitř kontejneru, několik kol.
+3. Nedostatek peněz a zamčený předmět: bez stržení a bez zablokování UI.
+4. Přepnutí tabu během požadavku, návrat, odpojení a znovupřipojení klienta.
+5. Nový řádek chybových hlášení, symboly měn a zvuky při uchopení/položení.
+6. Konkrétní verzi Fika a ostatní mody používané serverem.
+
+Žádný audit nemůže prokázat nepřítomnost všech chyb. Neproběhla zde automatizace
+živého herního klienta ani dlouhodobý test na reálném víceuživatelském serveru.

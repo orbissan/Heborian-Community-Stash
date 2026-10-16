@@ -11,7 +11,8 @@ namespace Heborian.Server.Modules.CommunityWarehouse;
 public sealed class WarehouseReadRouter : StaticRouter
 {
     public WarehouseReadRouter(JsonUtil json, WarehouseModule warehouse) : base(json, new RouteAction[] {
-        new RouteAction<EmptyRequestData>("/heborian/warehouse", (url, request, session, output, cancellation) => warehouse.Read(session))
+        new RouteAction<EmptyRequestData>("/heborian/warehouse", (url, request, session, output, cancellation) => warehouse.Read(session)),
+        new RouteAction<WarehouseHistoryRequest>("/heborian/warehouse/history", (url, request, session, output, cancellation) => warehouse.ReadHistory(session,request))
     }) { }
 }
 [Injectable]

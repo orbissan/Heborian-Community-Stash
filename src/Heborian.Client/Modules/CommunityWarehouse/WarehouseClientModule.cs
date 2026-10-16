@@ -21,7 +21,11 @@ namespace Heborian.Client.Modules.CommunityWarehouse
             var cells=context.Assets.LoadTexture("cell_full_border.png");
             cells.wrapMode=TextureWrapMode.Repeat;
             cells.filterMode=FilterMode.Bilinear;
-            controller=new WarehouseController(context.Log,cells);
+            var profileIcon=context.Assets.LoadTexture("icon_profile.png");
+            profileIcon.filterMode=FilterMode.Bilinear;
+            var stashIcon=context.Assets.LoadTexture("icon_stash.png");
+            stashIcon.filterMode=FilterMode.Bilinear;
+            controller=new WarehouseController(context.Log,cells,profileIcon,stashIcon);
             HeborianMenuView.Content.Opened += controller.Open;
             HeborianMenuView.Content.Updated += controller.Tick;
             HeborianMenuView.Content.Closed += controller.Close;
@@ -47,10 +51,13 @@ namespace Heborian.Client.Modules.CommunityWarehouse
         public JArray tree;
         public JObject upd;
     }
+    public sealed class WarehouseFees { public bool enabled; public string currency; public int deposit,withdrawal; public long? balance; }
     public sealed class WarehouseSnapshot
     {
         public long revision;
         public int width, height, personalWidth, personalHeight;
+        public bool historyAvailable;
+        public WarehouseFees fees;
         public string error;
         public List<WarehouseItem> items = new List<WarehouseItem>();
         public List<WarehouseItem> blocked = new List<WarehouseItem>();
@@ -62,15 +69,18 @@ namespace Heborian.Client.Modules.CommunityWarehouse
         private Task<string> refresh;
         private float nextRefresh;
         private float messageUntil;
-        private bool busy, opened, disposed;
+        private bool busy, awaitingSnapshot, opened, disposed;
+        private float transferStarted;
+        private bool transferWaitReported;
+        private string pendingRequest;
         private string message = "", selectedId;
         private bool selectedPersonal;
         private WarehousePanel panel;
         private ManualLogSource log;
         private string lastReadError;
 
-        private readonly Texture2D cells;
-        public WarehouseController(ManualLogSource logger,Texture2D cells) { log=logger; this.cells=cells; }
+        private readonly Texture2D cells,profileIcon,stashIcon;
+        public WarehouseController(ManualLogSource logger,Texture2D cells,Texture2D profileIcon,Texture2D stashIcon) { log=logger; this.cells=cells; this.profileIcon=profileIcon; this.stashIcon=stashIcon; }
 
         public void Open()
         {
@@ -84,7 +94,7 @@ namespace Heborian.Client.Modules.CommunityWarehouse
             if(panel == null || !panel.IsAttachedTo(root))
             {
                 panel?.Dispose();
-                panel=new WarehousePanel(root,HeborianMenuView.ActiveTextTemplate,cells,
+                panel=new WarehousePanel(root,HeborianMenuView.ActiveTextTemplate,cells,profileIcon,stashIcon,
                     (id, personal) => { selectedId=id; selectedPersonal=personal; },
                     (id, personal, x, y, rotated, amount) => {
                         selectedId=id; selectedPersonal=personal;
@@ -105,6 +115,9 @@ namespace Heborian.Client.Modules.CommunityWarehouse
         public void Close()
         {
             opened=false;
+            // Personal inventory may change on other screens without changing the shared revision.
+            snapshot=null;
+            refresh=null;
             panel?.Dispose();
             panel=null;
             selectedId=null;
@@ -112,6 +125,13 @@ namespace Heborian.Client.Modules.CommunityWarehouse
         public void Tick()
         {
             if(disposed || !opened || panel == null) return;
+            if(busy && !awaitingSnapshot && !transferWaitReported && Time.unscaledTime-transferStarted>20)
+            {
+                transferWaitReported=true;
+                message="Waiting for game inventory confirmation. If this persists, reconnect before moving more items.";
+                log.LogWarning("[CommunityWarehouse] Inventory callback pending for request " + pendingRequest
+                    + ". Do not retry automatically; server may already have committed the transfer.");
+            }
             if(panel.HasModal) { panel.TickModal(); return; }
             // Do not recycle native item views or replace the drag's revision mid-gesture.
             if(panel.IsDragging) { panel.UpdateDrag(); return; }
@@ -124,14 +144,19 @@ namespace Heborian.Client.Modules.CommunityWarehouse
                     { ReadFailed(result?.error ?? "Invalid server response."); }
                     else if(result.width != WarehouseDimensions.Width || (result.height<1 || result.height>WarehouseDimensions.MaxRows) || result.items == null || result.personal == null || result.personalWidth<1 || result.personalHeight<1)
                     { ReadFailed("Unsupported warehouse protocol."); }
-                    else { snapshot = result; lastReadError=null; if(!busy && Time.unscaledTime >= messageUntil) message = ""; }
+                    else
+                    {
+                        snapshot=result; lastReadError=null;
+                        if(awaitingSnapshot) { awaitingSnapshot=false; busy=false; }
+                        if(!busy && Time.unscaledTime >= messageUntil) message="";
+                    }
                 }
                 catch(Exception error) { ReadFailed("Connection error: " + error.Message); }
                 refresh=null;
             }
             panel.Resize();
             panel.Render(snapshot,message,busy,selectedId,selectedPersonal);
-            if(!busy && refresh==null && Time.unscaledTime >= nextRefresh)
+            if((!busy || awaitingSnapshot) && refresh==null && Time.unscaledTime >= nextRefresh)
             {
                 nextRefresh=Time.unscaledTime+2;
                 try { refresh=RequestHandler.GetJsonAsync("/heborian/warehouse"); }
@@ -140,6 +165,7 @@ namespace Heborian.Client.Modules.CommunityWarehouse
         }
         private void ReadFailed(string error)
         {
+            if(awaitingSnapshot) { awaitingSnapshot=false; busy=false; }
             snapshot=null; message=error;
             if(lastReadError != error) log?.LogWarning("[CommunityWarehouse] " + error);
             lastReadError=error;
@@ -162,11 +188,20 @@ namespace Heborian.Client.Modules.CommunityWarehouse
             // A read started before this mutation must not repopulate an obsolete snapshot.
             refresh=null;
             busy=true; message="";
+            transferStarted=Time.unscaledTime; transferWaitReported=false;
+            pendingRequest=(string)operation["requestId"];
+            // Capture before callbacks/refresh can dispose or replace the source view.
+            string itemSound=panel?.ItemSound(selectedId,selectedPersonal);
+            log.LogInfo("[CommunityWarehouse] Sending " + direction + " item=" + selectedId + " request=" + pendingRequest);
             try
             {
                 session.SendOperationRightNow(operation, result => {
+                    log.LogInfo("[CommunityWarehouse] Inventory callback request=" + operation["requestId"] + " success=" + result.Succeed);
                     if(disposed) return;
-                    busy=false; selectedId=null; snapshot=null;
+                    if(result.Succeed) NativeWarehouseItem.PlaySound(itemSound,EFT.UI.EInventorySoundType.drop);
+                    // Keep the previous views until the authoritative snapshot arrives.
+                    // Still block gestures so no operation can use the old revision.
+                    awaitingSnapshot=true; busy=true; selectedId=null;
                     message=result.Succeed ? "" : "Operation failed: " + result.Error;
                     messageUntil=Time.unscaledTime+8;
                     nextRefresh=0;

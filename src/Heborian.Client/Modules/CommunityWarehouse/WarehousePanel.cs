@@ -4,7 +4,6 @@ using System.Linq;
 using EFT.UI;
 using HarmonyLib;
 using Heborian.Client.Modules.HeborianMenu;
-using Newtonsoft.Json;
 using TMPro;
 using UnityEngine;
 using UnityEngine.Events;
@@ -13,15 +12,17 @@ using UnityEngine.UI;
 
 namespace Heborian.Client.Modules.CommunityWarehouse
 {
-    internal sealed class WarehousePanel : IDisposable
+    internal sealed partial class WarehousePanel : IDisposable
     {
         private const float Cell=60;
         private const float ScrollbarWidth=14;
-        private readonly Texture2D cells;
+        private readonly Texture2D cells,profileIcon,stashIcon;
         private readonly RectTransform parent,root,shared,personalViewport,personalContent,personalBackground;
         private readonly RectTransform sharedViewport,sharedBar,personalBar,sharedBackground;
-        private readonly TMP_Text template,status,sharedTitle;
+        private readonly TMP_Text template,status,sharedTitle,feeLabel,personalTitle,balanceLabel;
+        private readonly RectTransform balanceHeader,feeHeader;
         private readonly Button refresh;
+        private readonly Button historyButton;
         private readonly Action<string,bool> select;
         private readonly Action<string,bool,int?,int?,bool?,int?> move;
         private readonly Action<string,bool,string,bool,int?> merge;
@@ -35,7 +36,7 @@ namespace Heborian.Client.Modules.CommunityWarehouse
         private readonly ScrollRect scroll;
         private readonly ScrollRect sharedScroll;
         private WarehouseSnapshot lastSnapshot;
-        private string renderedData,renderError,modalError;
+        private string renderError,modalError;
         private bool busy,disposed;
         private WarehouseItemInput dragging;
         private RectTransform dragGhost;
@@ -52,8 +53,12 @@ namespace Heborian.Client.Modules.CommunityWarehouse
         private GameObject splitOverlay;
         private bool splitRequested;
         private Func<bool> cancelModal;
-        public bool HasModal => splitOverlay != null;
+        public bool HasModal => splitOverlay != null || historyOverlay != null;
         public bool IsDragging => dragging != null;
+        public string ItemSound(string id,bool personal)
+        {
+            return tiles.Find(tile => tile.Input.Data.id==id && tile.Input.Personal==personal)?.Native?.SoundKey;
+        }
         private sealed class Tile
         {
             public WarehouseItemInput Input;
@@ -61,13 +66,13 @@ namespace Heborian.Client.Modules.CommunityWarehouse
         }
         private sealed class PositionedItem { public WarehouseItem Item; public int X,Y; }
 
-        public WarehousePanel(RectTransform parent,TMP_Text template,Texture2D cells,Action<string,bool> select,
+        public WarehousePanel(RectTransform parent,TMP_Text template,Texture2D cells,Texture2D profileIcon,Texture2D stashIcon,Action<string,bool> select,
             Action<string,bool,int?,int?,bool?,int?> move,UnityAction refreshAction,Action<string,bool,string,bool,int?> merge)
         {
             if(parent == null || template == null || template.font == null)
                 throw new InvalidOperationException("Menu content or native font unavailable.");
             this.parent=parent; this.template=template; this.select=select; this.move=move; this.cells=cells;
-            this.merge=merge;
+            this.merge=merge; this.profileIcon=profileIcon; this.stashIcon=stashIcon;
             root=Rect("Heborian.Warehouse",parent,0,0,1510,800);
             root.anchorMin=root.anchorMax=root.pivot=new Vector2(0,1);
             root.anchoredPosition=Vector2.zero;
@@ -76,8 +81,29 @@ namespace Heborian.Client.Modules.CommunityWarehouse
             try
             {
                 sharedTitle=Header("COMMUNITY STASH   " + WarehouseDimensions.Width + " x " + WarehouseDimensions.Height,8);
-                status=Label(root,"",320,12,650,24,14);
-                Header("YOUR STASH",1008);
+                feeHeader=Rect("TransferFees",root,320,8,350,30);
+                Paint(feeHeader,new Color(.72f,.73f,.68f,1)).raycastTarget=false;
+                feeLabel=Label(feeHeader,"",8,3,334,24,16);
+                feeLabel.enableAutoSizing=true; feeLabel.fontSizeMin=10; feeLabel.fontSizeMax=16;
+                feeLabel.enableWordWrapping=false; feeLabel.alignment=TextAlignmentOptions.Midline;
+                feeLabel.color=new Color(.08f,.09f,.09f,1); feeLabel.fontStyle=FontStyles.Bold;
+                feeHeader.gameObject.SetActive(false);
+                historyButton=Button(root,"HISTORY",682,8,110,30,OpenHistory);
+                historyButton.gameObject.SetActive(false);
+                // Long fee/recovery errors need a readable full-width row, not the
+                // narrow space left after the header cells and HISTORY button.
+                status=Label(root,"",8,42,960,32,14);
+                status.enableAutoSizing=true; status.fontSizeMin=11; status.fontSizeMax=14;
+                status.richText=false;
+                personalTitle=Header("YOUR STASH",1008,260);
+                balanceHeader=Rect("PersonalBalance",root,1278,8,210,30);
+                Paint(balanceHeader,new Color(.72f,.73f,.68f,1)).raycastTarget=false;
+                balanceLabel=Label(balanceHeader,"",8,3,194,24,18);
+                balanceLabel.enableAutoSizing=true; balanceLabel.fontSizeMin=10; balanceLabel.fontSizeMax=18;
+                balanceLabel.enableWordWrapping=false;
+                balanceLabel.alignment=TextAlignmentOptions.Midline;
+                balanceLabel.color=new Color(.08f,.09f,.09f,1); balanceLabel.fontStyle=FontStyles.Bold;
+                balanceHeader.gameObject.SetActive(false);
                 sharedViewport=Rect("SharedViewport",root,8,46,Cell*WarehouseDimensions.Width,Cell*8);
                 Paint(sharedViewport,new Color(.04f,.04f,.04f,1));
                 sharedViewport.gameObject.AddComponent<RectMask2D>();
@@ -106,20 +132,27 @@ namespace Heborian.Client.Modules.CommunityWarehouse
                 dropHighlight.raycastTarget=false;
                 dropHighlight.gameObject.SetActive(false);
                 refresh=Button(root,"REFRESH",1378,8,110,30,() => {
-                    renderError=null; renderedData=null; lastSnapshot=null; refreshAction();
+                    renderError=null; lastSnapshot=null; refreshAction();
                 });
                 Resize(); root.gameObject.SetActive(true);
             }
             catch { Dispose(); throw; }
         }
-        private TMP_Text Header(string text,float x)
+        private TMP_Text Header(string text,float x,float width=300)
         {
-            Paint(Rect("Header",root,x,8,300,30),new Color(.72f,.73f,.68f,1)).raycastTarget=false;
-            var label=Label(root,text,x+10,12,280,24,18);
+            var header=Rect("Header",root,x,8,width,30);
+            Paint(header,new Color(.72f,.73f,.68f,1)).raycastTarget=false;
+            var icon=Rect("StashIcon",header,9,4,22,22).gameObject.AddComponent<RawImage>();
+            icon.texture=stashIcon; icon.color=new Color(.08f,.09f,.09f,1); icon.raycastTarget=false;
+            var label=Label(header,text,39,4,width-49,24,18);
+            label.enableAutoSizing=true; label.fontSizeMin=width>300 ? 12 : 15; label.fontSizeMax=18;
+            label.enableWordWrapping=false;
             label.color=new Color(.08f,.09f,.09f,1); label.fontStyle=FontStyles.Bold;
             return label;
         }
         public bool IsAttachedTo(RectTransform target) => root != null && parent != null && parent == target;
+        private static string CurrencySymbol(string currency) => currency=="RUB" ? "\u20BD"
+            : currency=="EUR" ? "\u20AC" : currency=="USD" ? "$" : currency;
         public void Resize()
         {
             if(IsDragging) return;
@@ -131,10 +164,23 @@ namespace Heborian.Client.Modules.CommunityWarehouse
             // The parent already excludes the bottom taskbar: keep only an 8-unit bottom gap.
             float height=Mathf.Max(Cell,parent.rect.height/scale-54);
             root.sizeDelta=new Vector2(1030+Cell*personalColumns,parent.rect.height/scale);
-            sharedViewport.sizeDelta=new Vector2(Cell*WarehouseDimensions.Width,Mathf.Min(Cell*sharedRows,height));
+            float statusHeight=string.IsNullOrEmpty(status.text) ? 0 : 34;
+            sharedViewport.anchoredPosition=new Vector2(8,-46-statusHeight);
+            sharedBar.anchoredPosition=new Vector2(976,-46-statusHeight);
+            sharedViewport.sizeDelta=new Vector2(Cell*WarehouseDimensions.Width,Mathf.Min(Cell*sharedRows,Mathf.Max(Cell,height-statusHeight)));
             personalViewport.sizeDelta=new Vector2(Cell*personalColumns,height);
             personalBar.anchoredPosition=new Vector2(1016+Cell*personalColumns,-46);
             ((RectTransform)refresh.transform).anchoredPosition=new Vector2(898+Cell*personalColumns,-8);
+            // Reserve the refresh button and equal ten-unit gaps between header cells.
+            float headerSpace=Cell*personalColumns-120;
+            float titleWidth=(headerSpace-10)*.55f;
+            float balanceWidth=headerSpace-10-titleWidth;
+            ((RectTransform)personalTitle.transform.parent).sizeDelta=new Vector2(titleWidth,30);
+            personalTitle.rectTransform.sizeDelta=new Vector2(titleWidth-49,24);
+            personalTitle.fontSizeMin=10;
+            balanceHeader.anchoredPosition=new Vector2(1008+titleWidth+10,-8);
+            balanceHeader.sizeDelta=new Vector2(balanceWidth,30);
+            balanceLabel.rectTransform.sizeDelta=new Vector2(balanceWidth-16,24);
             sharedBar.sizeDelta=new Vector2(ScrollbarWidth,sharedViewport.rect.height); personalBar.sizeDelta=new Vector2(ScrollbarWidth,height);
             shared.anchoredPosition=new Vector2(0,Mathf.Clamp(shared.anchoredPosition.y,0,Mathf.Max(0,shared.rect.height-sharedViewport.rect.height)));
             personalContent.anchoredPosition=new Vector2(0,Mathf.Clamp(personalContent.anchoredPosition.y,0,Mathf.Max(0,personalContent.rect.height-height)));
@@ -159,53 +205,60 @@ namespace Heborian.Client.Modules.CommunityWarehouse
         public void Render(WarehouseSnapshot snapshot,string message,bool busy,string selectedId,bool personal)
         {
             this.busy=busy;
+            var feeInfo=snapshot?.fees;
+            personalTitle.text=snapshot==null ? "YOUR STASH"
+                : "YOUR STASH  "+snapshot.personalWidth+" x "+snapshot.personalHeight;
+            balanceHeader.gameObject.SetActive(feeInfo?.balance!=null);
+            balanceLabel.text=feeInfo?.balance!=null
+                ? CurrencySymbol(feeInfo.currency)
+                    +"  "+feeInfo.balance.Value.ToString("N0") : "";
+            string feeText=feeInfo?.enabled==true ? "Deposit: "+CurrencySymbol(feeInfo.currency)+" "+feeInfo.deposit.ToString("N0")
+                +" | Withdrawal: "+CurrencySymbol(feeInfo.currency)+" "+feeInfo.withdrawal.ToString("N0") : "";
+            feeLabel.text=feeText;
+            bool showFees=feeInfo?.enabled==true;
+            feeHeader.gameObject.SetActive(showFees);
+            ((RectTransform)historyButton.transform).anchoredPosition=new Vector2(showFees ? 682 : 320,-8);
             status.text=renderError ?? modalError ?? message;
+            Resize();
             if(IsDragging) return;
             if(!ReferenceEquals(lastSnapshot,snapshot))
             {
-                string data=snapshot == null ? "" : JsonConvert.SerializeObject(new { snapshot.items,snapshot.personal,snapshot.personalWidth,snapshot.personalHeight,snapshot.height,snapshot.blocked });
-                if(data != renderedData)
+                try { renderError=null; Rebuild(snapshot); }
+                catch(Exception error)
                 {
-                    try { Rebuild(snapshot); renderError=null; }
-                    catch(Exception error)
-                    {
-                        ClearTiles(); renderError="Inventory view unavailable: " + error.Message + " (see client log).";
-                        throw;
-                    }
-                    finally { renderedData=data; lastSnapshot=snapshot; }
+                    ClearTiles(); renderError="Inventory view unavailable: " + error.Message + " (see client log).";
+                    throw;
                 }
-                lastSnapshot=snapshot;
+                finally { lastSnapshot=snapshot; }
             }
             SyncVisiblePersonal();
             foreach(var tile in tiles)
             {
                 bool selected=tile.Input.Data.id==selectedId && tile.Input.Personal==personal;
-                tile.Native.Highlight(selected, tile.Input.Hovered && (!tile.Input.Personal || tile.Input.Data.transferable));
+                tile.Native?.Highlight(selected, tile.Input.Hovered && (!tile.Input.Personal || tile.Input.Data.transferable));
             }
             refresh.interactable=!busy;
+            historyButton.gameObject.SetActive(snapshot?.historyAvailable==true);
+            historyButton.interactable=!busy;
         }
         private void Rebuild(WarehouseSnapshot snapshot)
         {
-            ClearTiles();
             personalItems.Clear(); renderedFirstRow=-1;
-            foreach(Transform child in personalBackground) { child.gameObject.SetActive(false); UnityEngine.Object.Destroy(child.gameObject); }
+            if(snapshot==null) { ClearTiles(); return; }
             sharedRows=snapshot?.height ?? sharedRows;
             sharedTitle.text="COMMUNITY STASH   " + WarehouseDimensions.Width + " x " + sharedRows;
             shared.sizeDelta=new Vector2(Cell*WarehouseDimensions.Width,Cell*sharedRows);
-            sharedBackground.sizeDelta=shared.sizeDelta;
-            foreach(Transform child in sharedBackground) { child.gameObject.SetActive(false); UnityEngine.Object.Destroy(child.gameObject); }
-            DrawGrid(sharedBackground,sharedRows,WarehouseDimensions.Width);
+            ResizeGrid(sharedBackground,sharedRows,WarehouseDimensions.Width);
             personalColumns=snapshot?.personalWidth ?? personalColumns;
             personalRows=snapshot?.personalHeight ?? personalRows;
             if(snapshot != null)
             {
-                foreach(var item in snapshot.items) Add(item,false,shared,item.x,item.y);
+                ReconcileTiles(snapshot.items,false,shared);
                 foreach(var item in snapshot.personal)
                     personalItems.Add(new PositionedItem {Item=item,X=item.x,Y=item.y});
             }
             personalContent.sizeDelta=new Vector2(Cell*personalColumns,Cell*personalRows);
-            personalBackground.sizeDelta=personalContent.sizeDelta;
-            DrawGrid(personalBackground,personalRows,personalColumns);
+            ResizeGrid(personalBackground,personalRows,personalColumns);
             Resize();
             SyncVisiblePersonal();
         }
@@ -217,16 +270,34 @@ namespace Heborian.Client.Modules.CommunityWarehouse
             if(first==renderedFirstRow && visibleRows==renderedVisibleRows) return;
             renderedVisibleRows=visibleRows;
             var visible=personalItems.FindAll(p => p.Y+p.Item.height>first && p.Y<first+visibleRows);
-            var ids=new HashSet<string>();
-            foreach(var p in visible) ids.Add(p.Item.id);
-            for(int i=tiles.Count-1;i>=0;i--)
-                if(tiles[i].Input.Personal && tiles[i].Input != dragging && !ids.Contains(tiles[i].Input.Data.id))
-                { ReleaseTile(tiles[i]); tiles.RemoveAt(i); }
-            var existing=new HashSet<string>();
-            foreach(var tile in tiles) if(tile.Input.Personal) existing.Add(tile.Input.Data.id);
-            try { foreach(var p in visible) if(!existing.Contains(p.Item.id)) Add(p.Item,true,personalContent,p.X,p.Y); }
+            try { ReconcileTiles(visible.Select(p => p.Item),true,personalContent); }
             catch(Exception error) { renderError="Inventory view unavailable: " + error.Message + " (see client log)."; throw; }
             finally { renderedFirstRow=first; }
+        }
+        private void ReconcileTiles(IEnumerable<WarehouseItem> desired,bool personal,RectTransform owner)
+        {
+            var pending=desired.ToDictionary(item => item.id);
+            for(int i=tiles.Count-1;i>=0;i--)
+            {
+                var tile=tiles[i];
+                if(tile.Input.Personal != personal) continue;
+                // Scrolling while dragging must preserve the source icon, even offscreen.
+                if(tile.Input==dragging) { pending.Remove(tile.Input.Data.id); continue; }
+                if(pending.TryGetValue(tile.Input.Data.id,out var next) && WarehouseItemPresentation.Same(tile.Input.Data,next))
+                {
+                    tile.Input.Data=next; pending.Remove(next.id);
+                }
+                else { ReleaseTile(tile); tiles.RemoveAt(i); }
+            }
+            foreach(var item in pending.Values) Add(item,personal,owner,item.x,item.y);
+        }
+        private void ResizeGrid(RectTransform owner,int rows,int columns)
+        {
+            var size=new Vector2(Cell*columns,Cell*rows);
+            if(owner.sizeDelta==size) return;
+            owner.sizeDelta=size;
+            foreach(Transform child in owner) { child.gameObject.SetActive(false); UnityEngine.Object.Destroy(child.gameObject); }
+            DrawGrid(owner,rows,columns);
         }
         private void Add(WarehouseItem data,bool personal,RectTransform owner,int x,int y)
         {
@@ -237,7 +308,14 @@ namespace Heborian.Client.Modules.CommunityWarehouse
             var input=tile.gameObject.AddComponent<WarehouseItemInput>();
             input.Panel=this; input.Data=data; input.Personal=personal;
             try { tiles.Add(new Tile {Input=input,Native=new NativeWarehouseItem(data,tile,Cell)}); }
-            catch { UnityEngine.Object.Destroy(tile.gameObject); throw; }
+            catch(Exception error)
+            {
+                input.Invalid=true;
+                tiles.Add(new Tile {Input=input,Native=null});
+                Paint(Rect("InvalidItem",tile,0,0,data.width*Cell,data.height*Cell),new Color(.35f,.12f,.12f,.8f));
+                Label(tile,"Unavailable item",4,4,data.width*Cell-8,data.height*Cell-8,14);
+                UnityEngine.Debug.LogError("[CommunityWarehouse] Cannot display item " + data.id + ": " + error);
+            }
         }
         private void DrawGrid(RectTransform owner,int rows,int columns=8)
         {
@@ -256,13 +334,18 @@ namespace Heborian.Client.Modules.CommunityWarehouse
         }
         public void Click(WarehouseItemInput input,bool quick)
         {
-            if((input.Personal && !input.Data.transferable) || busy || renderError != null || lastSnapshot == null || IsDragging || HasModal) return;
+            if(input.Invalid || (input.Personal && !input.Data.transferable) || busy || renderError != null || lastSnapshot == null || IsDragging || HasModal) return;
             select(input.Data.id,input.Personal);
             if(quick) move(input.Data.id,input.Personal,null,null,null,null);
         }
         public bool BeginDrag(WarehouseItemInput input,PointerEventData e)
         {
-            if((input.Personal && !input.Data.transferable) || busy || renderError != null || lastSnapshot == null || IsDragging || HasModal) return false;
+            try { return BeginDragCore(input,e); }
+            catch(Exception error) { FailDrag(error); return false; }
+        }
+        private bool BeginDragCore(WarehouseItemInput input,PointerEventData e)
+        {
+            if(input.Invalid || (input.Personal && !input.Data.transferable) || busy || renderError != null || lastSnapshot == null || IsDragging || HasModal) return false;
             select(input.Data.id,input.Personal);
             dragging=input; dragEvent=e;
             splitRequested=input.Data.count>1 && ControlHeld;
@@ -276,17 +359,29 @@ namespace Heborian.Client.Modules.CommunityWarehouse
             iconRect.anchoredPosition=Vector2.zero;
             dragIcon=Paint(iconRect,Color.white); dragIcon.raycastTarget=false;
             scroll.enabled=false; sharedScroll.enabled=false;
-            Drag(e); return true;
+            DragCore(e);
+            NativeWarehouseItem.PlaySound(draggedNative.SoundKey,EInventorySoundType.pickup);
+            return true;
         }
         public void Drag(PointerEventData e)
+        {
+            try { DragCore(e); }
+            catch(Exception error) { FailDrag(error); }
+        }
+        private void DragCore(PointerEventData e)
         {
             dragEvent=e;
             if(!IsDragging) return;
             RectTransformUtility.ScreenPointToLocalPointInRectangle(root,e.position,e.pressEventCamera,out var point);
             dragGhost.localPosition=(Vector3)(point-grabOffset);
-            UpdateDrag();
+            UpdateDragCore();
         }
         public void UpdateDrag()
+        {
+            try { UpdateDragCore(); }
+            catch(Exception error) { FailDrag(error); }
+        }
+        private void UpdateDragCore()
         {
             if(!IsDragging || dragEvent == null) return;
             splitRequested |= dragging.Data.count>1 && ControlHeld;
@@ -327,7 +422,7 @@ namespace Heborian.Client.Modules.CommunityWarehouse
             if(mergeTarget != null)
             {
                 dropX=dropY=null;
-                validDrop=(!mergeTarget.Personal || mergeTarget.Data.canReceive) && WarehousePacking.CanMerge(dragging.Data,mergeTarget.Data);
+                validDrop=!mergeTarget.Invalid && (!mergeTarget.Personal || mergeTarget.Data.canReceive) && WarehousePacking.CanMerge(dragging.Data,mergeTarget.Data);
                 dropHighlight.transform.SetParent(mergeTarget.transform,false);
                 var highlight=dropHighlight.rectTransform;
                 highlight.anchorMin=highlight.anchorMax=highlight.pivot=new Vector2(0,1);
@@ -391,8 +486,13 @@ namespace Heborian.Client.Modules.CommunityWarehouse
         }
         public void EndDrag(PointerEventData e)
         {
+            try { EndDragCore(e); }
+            catch(Exception error) { FailDrag(error); }
+        }
+        private void EndDragCore(PointerEventData e)
+        {
             if(!IsDragging) return;
-            Drag(e);
+            DragCore(e);
             var input=dragging; bool accept=validDrop; var x=dropX; var y=dropY; bool rotation=dragRotated;
             var targetStack=mergeTarget;
             bool split=splitRequested;
@@ -457,7 +557,8 @@ namespace Heborian.Client.Modules.CommunityWarehouse
         }
         public void TickModal()
         {
-            if(HasModal && (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter))) splitDialog.Accept();
+            if(historyOverlay!=null) { TickHistory(); return; }
+            if(splitDialog!=null && (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter))) splitDialog.Accept();
         }
         private void CloseSplit()
         {
@@ -468,16 +569,29 @@ namespace Heborian.Client.Modules.CommunityWarehouse
             if(splitOverlay != null) { splitOverlay.SetActive(false); UnityEngine.Object.Destroy(splitOverlay); }
             splitOverlay=null;
         }
+        private void FailDrag(Exception error)
+        {
+            CancelDrag();
+            modalError="Drag cancelled: " + error.Message + " (see client log).";
+            status.text=modalError;
+            UnityEngine.Debug.LogException(error);
+        }
         private void CancelDrag()
         {
-            if(!IsDragging) return;
-            if(dragGhost != null) { dragGhost.gameObject.SetActive(false); UnityEngine.Object.Destroy(dragGhost.gameObject); }
-            dragGhost=null; dragIcon=null;
-            draggedNative.RestoreSourcePresentation();
-            draggedNative=null;
-            dragging=null; dragEvent=null; validDrop=false; renderedFirstRow=-1;
-            dropHighlight.gameObject.SetActive(false); scroll.enabled=true; sharedScroll.enabled=true;
-            dropHighlight.transform.SetParent(root,false); mergeTarget=null;
+            // Clear the logical lock before touching Unity objects, including partial BeginDrag failures.
+            var native=draggedNative; var ghost=dragGhost;
+            draggedNative=null; dragGhost=null; dragIcon=null;
+            dragging=null; dragEvent=null; validDrop=false; renderedFirstRow=-1; mergeTarget=null;
+            if(scroll != null) scroll.enabled=true;
+            if(sharedScroll != null) sharedScroll.enabled=true;
+            if(dropHighlight != null)
+            {
+                dropHighlight.gameObject.SetActive(false);
+                dropHighlight.transform.SetParent(root,false);
+            }
+            if(ghost != null) { ghost.gameObject.SetActive(false); UnityEngine.Object.Destroy(ghost.gameObject); }
+            try { native?.RestoreSourcePresentation(); }
+            catch(Exception error) { UnityEngine.Debug.LogException(error); }
         }
         private void ClearTiles()
         {
@@ -490,7 +604,7 @@ namespace Heborian.Client.Modules.CommunityWarehouse
         }
         private void ReleaseTile(Tile tile)
         {
-            tile.Native.Dispose();
+            tile.Native?.Dispose();
             if(tile.Input != null) { tile.Input.gameObject.SetActive(false); UnityEngine.Object.Destroy(tile.Input.gameObject); }
         }
         private RectTransform Rect(string name,Transform owner,float x,float y,float width,float height)
@@ -528,7 +642,7 @@ namespace Heborian.Client.Modules.CommunityWarehouse
         }
         public void Dispose()
         {
-            if(disposed) return; disposed=true; CloseSplit(); ClearTiles();
+            if(disposed) return; disposed=true; CloseHistory(); CloseSplit(); ClearTiles();
             if(root != null) { root.gameObject.SetActive(false); UnityEngine.Object.Destroy(root.gameObject); }
         }
     }

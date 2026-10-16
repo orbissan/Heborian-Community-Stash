@@ -40,6 +40,11 @@ namespace Heborian.Client.Modules.HeborianMenu
         private HeborianMenuInput input;
         private EftScreenManager screenManager;
         private ManualLogSource log;
+        private readonly Dictionary<CanvasGroup,float> coveredScreens = new Dictionary<CanvasGroup,float>();
+        private EnvironmentUI tabEnvironment;
+        private bool previousMainEnvironment;
+        private object environmentScreen;
+        private static readonly System.Reflection.FieldInfo mainEnvironmentField=AccessTools.Field(typeof(EnvironmentUI),"_isMainScreen");
         private bool open;
         private bool released;
         private Dictionary<EMenuType, AnimatedToggle> nativeToggles;
@@ -133,6 +138,7 @@ namespace Heborian.Client.Modules.HeborianMenu
                 open = true;
                 activeView = this;
                 ClearNativeSelection();
+                RevealEnvironment();
                 panel.SetActive(true);
                 panel.transform.SetAsLastSibling();
                 EventSystem.current?.SetSelectedGameObject(null);
@@ -316,6 +322,8 @@ namespace Heborian.Client.Modules.HeborianMenu
         {
             if (inputTree != null && input != null) inputTree.Remove(input);
             inputTree = null;
+            RestoreEnvironment();
+            RestoreCoveredScreens();
             open = false;
             if (activeView == this) { Content.Close(); activeView = null; }
             if (panel != null) panel.SetActive(false);
@@ -334,6 +342,55 @@ namespace Heborian.Client.Modules.HeborianMenu
         }
 
         private void OnNativeTabPressed(EMenuType type, bool selected) { ClosePanel(false); }
+        private void RevealEnvironment()
+        {
+            // The native EnvironmentUI already owns the selected scene, camera and cursor parallax.
+            // Do not reload it or change the user's environment setting.
+            bool available=false;
+            foreach(var environment in UnityEngine.Resources.FindObjectsOfTypeAll<EnvironmentUI>())
+                if(environment.gameObject.scene.IsValid() && environment.gameObject.activeInHierarchy && environment.IsActive)
+                {
+                    available=true;
+                    tabEnvironment=environment;
+                    previousMainEnvironment=(bool)mainEnvironmentField.GetValue(environment);
+                    environmentScreen=screenManager.CurrentScreenController;
+                    // Same native secondary-screen mode as Character/Traders: hides MainScreenObjects
+                    // (logo/foreground props) and selects the secondary camera pose.
+                    environment.SetAsMain(false,false);
+                    break;
+                }
+            contentRoot.GetComponent<Image>().color=available
+                ? new Color(.025f,.032f,.032f,.12f) : new Color(.025f,.032f,.032f,1);
+            if(available) HideCoveredScreens();
+        }
+        private void RestoreEnvironment()
+        {
+            // BACK returns to the covered screen; a new screen owns its own environment settings.
+            if(tabEnvironment!=null && ReferenceEquals(environmentScreen,screenManager?.CurrentScreenController))
+                tabEnvironment.SetAsMain(previousMainEnvironment,false);
+            tabEnvironment=null; environmentScreen=null;
+        }
+        private void HideCoveredScreens()
+        {
+            // Hide presentation only: disabling the screen would also stop native menu behavior.
+            foreach(var screen in UnityEngine.Resources.FindObjectsOfTypeAll<UIScreen>())
+            {
+                if(!screen.gameObject.scene.IsValid() || !screen.gameObject.activeInHierarchy) continue;
+                if(panel.transform.IsChildOf(screen.transform) || bar.transform.IsChildOf(screen.transform)) continue;
+                if(screen.GetComponentInChildren<EnvironmentUI>(true)!=null) continue;
+                var group=screen.CanvasGroup;
+                if(group==null) continue;
+                if(!coveredScreens.ContainsKey(group)) coveredScreens.Add(group,group.alpha);
+                group.alpha=0;
+            }
+        }
+        private void RestoreCoveredScreens()
+        {
+            foreach(var pair in coveredScreens)
+                if(pair.Key!=null) pair.Key.alpha=pair.Value;
+            coveredScreens.Clear();
+        }
+
         private void OnScreenChanged(EEftScreenType type) { ClosePanel(false); }
         private void LateUpdate()
         {
@@ -342,7 +399,13 @@ namespace Heborian.Client.Modules.HeborianMenu
             tab.interactable = available;
             if (open && !available) Close();
             // Native screen updates can finish asynchronously after this overlay opens.
-            if (open) ClearNativeSelection();
+            if (open)
+            {
+                ClearNativeSelection();
+                if(tabEnvironment!=null && (bool)mainEnvironmentField.GetValue(tabEnvironment))
+                    tabEnvironment.SetAsMain(false,false);
+                foreach(var pair in coveredScreens) if(pair.Key!=null) pair.Key.alpha=0;
+            }
             if (open) Content.Tick();
         }
         private void OnDisable() { Close(); }

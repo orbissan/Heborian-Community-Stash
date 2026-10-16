@@ -15,6 +15,17 @@ public static class ServerVerification
     private static void Check(bool value, string message) { if (!value) throw new Exception(message); }
     public static string Run(string temp)
     {
+        // A broken framework response must be rejected before profile access/journaling.
+        var responseGuard=new Heborian.Server.Modules.CommunityWarehouse.WarehouseModule(null,null,null,null,null);
+        foreach(var output in new SPTarkov.Server.Core.Models.Eft.ItemEvent.ItemEventRouterResponse[] {
+            null, new SPTarkov.Server.Core.Models.Eft.ItemEvent.ItemEventRouterResponse() })
+        {
+            bool rejected=false;
+            try { responseGuard.Transfer(null,null,default,output).GetAwaiter().GetResult(); }
+            catch(InvalidOperationException e) { rejected=e.Message.StartsWith("Inventory response unavailable."); }
+            Check(rejected,"Missing inventory output reached profile mutation path");
+        }
+        Console.WriteLine("PASS: missing/malformed native inventory responses rejected before any profile access or journal write.");
         Directory.CreateDirectory(temp);
         var path = Path.Combine(temp, Guid.NewGuid() + ".json");
         var defaults = ServerConfiguration.Load(path);
@@ -40,6 +51,11 @@ public static class ServerVerification
         bool categoryTypo=false;
         try { ServerConfiguration.Load(path); } catch(JsonException) { categoryTypo=true; }
         Check(categoryTypo,"Misspelled category silently accepted");
+        Check(defaults.CommunityWarehouse.History.Enabled && defaults.CommunityWarehouse.History.Public
+            && defaults.CommunityWarehouse.History.RetentionDays==30,"Wrong history defaults");
+        File.WriteAllText(path,"{\"CommunityWarehouse\":{\"History\":{\"Enabled\":true,\"Public\":false,\"RetentionDays\":90}}}");
+        var history=ServerConfiguration.Load(path).CommunityWarehouse.History;
+        Check(history.Enabled && !history.Public && history.RetentionDays==90,"History options ignored");
         var original = new GlobalLocaleDictionary { [MainMenuBannerModule.TitleKey] = "Original", [MainMenuBannerModule.DescriptionKey] = "Description" };
         var lazy = new LazyLoad<GlobalLocaleDictionary>(() => original, true);
         var table = new LocaleTable

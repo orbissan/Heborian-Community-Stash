@@ -24,8 +24,11 @@ namespace Heborian.Server.Modules.CommunityWarehouse;
 public sealed class WarehouseOptions
 {
     public bool Enabled { get; set; } = true;
+    public bool FoundInRaidOnly { get; set; } = false;
     public int Rows { get; set; } = WarehouseDimensions.Height;
     public WarehouseCategories AllowedDeposits { get; set; } = new();
+    public WarehouseHistoryOptions History { get; set; } = new();
+    public WarehouseFeeOptions TransferFees { get; set; } = new();
 }
 public sealed class WarehouseCategories
 {
@@ -55,9 +58,16 @@ public record WarehouseRequest : BaseInteractionRequestData
     [JsonPropertyName("targetId")] public string TargetId { get; set; }
     [JsonPropertyName("targetPersonal")] public bool TargetPersonal { get; set; }
 }
+public record WarehouseHistoryRequest : SPTarkov.Server.Core.Models.Utils.IRequestData
+{
+    [JsonPropertyName("page")] public int Page { get; set; }
+    [JsonPropertyName("filter")] public string Filter { get; set; } = "all";
+    [JsonPropertyName("search")] public string Search { get; set; } = "";
+    [JsonPropertyName("throughRevision")] public long ThroughRevision { get; set; }
+}
 
 [Injectable(InjectionType.Singleton)]
-public sealed class WarehouseModule : IServerModule
+public sealed partial class WarehouseModule : IServerModule
 {
     private readonly SaveServer saves;
     private readonly ItemHelper items;
@@ -67,7 +77,10 @@ public sealed class WarehouseModule : IServerModule
     private readonly SemaphoreSlim gate = new(1,1);
     private WarehouseStore store;
     private bool ready;
+    private bool foundInRaidOnly;
     private WarehouseCategories allowed = new();
+    private WarehouseHistoryOptions historyOptions = new();
+    private WarehouseAudit audit;
     public string Id => "CommunityWarehouse";
     public bool IsEnabled(ServerConfiguration config) => config.CommunityWarehouse?.Enabled == true;
     public WarehouseModule(SaveServer saves, ItemHelper items, InventoryHelper inventory, JsonUtil json, HttpResponseUtil responses)
@@ -78,8 +91,15 @@ public sealed class WarehouseModule : IServerModule
     public async Task InitializeAsync(ServerConfiguration config, CancellationToken cancellationToken)
     {
         if(!IsEnabled(config)) return;
+        InventoryOutputSynchronization.Install();
+        fees=config.CommunityWarehouse.TransferFees ?? throw new InvalidDataException("TransferFees must be an object.");
+        fees.Validate();
+        foundInRaidOnly=config.CommunityWarehouse.FoundInRaidOnly;
         allowed=config.CommunityWarehouse.AllowedDeposits ?? throw new InvalidDataException("AllowedDeposits must be an object.");
-        store=new WarehouseStore(Path.Combine(Path.GetDirectoryName(typeof(WarehouseModule).Assembly.Location)!, "data", "warehouse.json"),config.CommunityWarehouse.Rows);
+        historyOptions=config.CommunityWarehouse.History ?? throw new InvalidDataException("History must be an object.");
+        var dataPath=Path.Combine(Path.GetDirectoryName(typeof(WarehouseModule).Assembly.Location)!,"data");
+        audit=new WarehouseAudit(Path.Combine(dataPath,"history"),historyOptions.RetentionDays);
+        store=new WarehouseStore(Path.Combine(dataPath,"warehouse.json"),config.CommunityWarehouse.Rows,audit);
         store.Load();
         if(store.State.Pending != null)
         {
@@ -88,6 +108,33 @@ public sealed class WarehouseModule : IServerModule
             Console.WriteLine("[CommunityWarehouse] Recovered pending transfer.");
         }
         ready = true;
+    }
+    public async ValueTask<string> ReadHistory(MongoId session,WarehouseHistoryRequest request)
+    {
+        await gate.WaitAsync();
+        try
+        {
+            if(!ready) throw new InvalidOperationException("Warehouse unavailable.");
+            Profile(session);
+            if(!historyOptions.Enabled || !historyOptions.Public) throw new InvalidOperationException("History is not public on this server.");
+            store.FlushAudit();
+            if(store.State.AuditOutbox.Count>0) throw new IOException("History archive temporarily unavailable. Contact the administrator.");
+            return json.Serialize(audit.Read(request.Page,request.Filter,request.Search,request.ThroughRevision,HistoryCategory));
+        }
+        catch(Exception error) { return json.Serialize(new {error=error.Message}); }
+        finally { gate.Release(); }
+    }
+    private WarehouseAuditEvent AuditEvent(PmcData pmc,WarehouseRequest request,string action,WarehouseEntry entry,int count,bool contents=false)
+    {
+        if(!historyOptions.Enabled) return null;
+        return new WarehouseAuditEvent {
+            RequestId=request.RequestId,PlayerId="",PlayerName=pmc.Info?.Nickname ?? "Unknown player",
+            Action=action,ItemId=request.ItemId,Template=entry.Template,ItemName=entry.Name,Count=count,TargetId=request.TargetId,
+            Condition=WarehouseCondition.Read(entry.Json,json.Serialize(items.GetItem(new MongoId(entry.Template)).Value.Properties)),
+            Contents=contents ? StoredTree(entry).Skip(1).Select(i=>new WarehouseAuditItem {
+                Id=i.Id.ToString(),Template=i.Template.ToString(),Name=items.GetItemName(i.Template),Count=checked((int)(i.Upd?.StackObjectsCount ?? 1))
+            }).ToList() : new()
+        };
     }
     private PmcData Profile(MongoId session)
     {
@@ -106,15 +153,39 @@ public sealed class WarehouseModule : IServerModule
             Width = template.Properties.Width ?? 1, Height = template.Properties.Height ?? 1,
             Count = (int)(item.Upd?.StackObjectsCount ?? 1), Json = json.Serialize(item) };
     }
-    private List<Item> ItemTree(Item root,PmcData pmc)
+    private List<Item> ItemTree(Item root,PmcData pmc,ILookup<string,Item> children=null)
     {
+        children ??= pmc.Inventory.Items.ToLookup(x => x.ParentId);
         var tree=new List<Item> {root};
         var ids=new HashSet<string> {root.Id.ToString()};
         for(int i=0;i<tree.Count;i++)
-            foreach(var child in pmc.Inventory.Items.Where(x => x.ParentId == tree[i].Id.ToString()))
+            foreach(var child in children[tree[i].Id.ToString()])
                 if(ids.Add(child.Id.ToString())) tree.Add(child);
         return tree;
     }
+    private string HistoryCategory(string template)
+    {
+        try
+        {
+            bool Is(params MongoId[] types) => items.IsOfBaseclasses(new MongoId(template),types);
+            if(Is(BaseClasses.WEAPON)) return "Weapons";
+            if(Is(BaseClasses.TOOL,BaseClasses.MULTITOOLS)) return "Tools";
+            if(Is(BaseClasses.FOOD_DRINK)) return "Provisions";
+            if(Is(BaseClasses.MEDS)) return "Medication";
+            if(Is(BaseClasses.AMMO_BOX)) return "Ammo > Ammo packs";
+            if(Is(BaseClasses.AMMO)) return "Ammo > Rounds";
+            if(Is(BaseClasses.KEY)) return "Keys";
+            if(Is(BaseClasses.MONEY)) return "Money";
+            if(Is(BaseClasses.ARMOR,BaseClasses.ARMOR_PLATE,BaseClasses.ARMORED_EQUIPMENT,
+                BaseClasses.BACKPACK,BaseClasses.VEST,BaseClasses.HEADWEAR,BaseClasses.FACE_COVER,BaseClasses.HEADPHONES)) return "Gear";
+            if(Is(BaseClasses.MOD)) return "Weapon parts & mods";
+            if(Is(BaseClasses.SIMPLE_CONTAINER,BaseClasses.LOCKABLE_CONTAINER)) return "Containers";
+            if(Is(BaseClasses.BARTER_ITEM)) return "Barter items";
+        }
+        catch { /* Historical templates may belong to a mod that is no longer installed. */ }
+        return "Other";
+    }
+    private bool DepositAllowed(Item item) => (!foundInRaidOnly || item.Upd?.SpawnedInSession == true) && CategoryAllowed(item);
     private bool CategoryAllowed(Item item)
     {
         bool Is(params MongoId[] types) => items.IsOfBaseclasses(item.Template,types);
@@ -134,6 +205,7 @@ public sealed class WarehouseModule : IServerModule
     }
     private bool PersonalStack(Item item,PmcData pmc) =>
         item.ParentId == pmc.Inventory.Stash?.ToString() && item.SlotId == "hideout"
+        && !ManuallyLocked(item)
         && !pmc.Inventory.Items.Any(x => x.ParentId == item.Id.ToString())
         && !(pmc.InsuredItems?.Any(x => x.ItemId == item.Id) ?? false)
         && items.GetItem(item.Template).Value.Properties.QuestItem != true;
@@ -141,7 +213,7 @@ public sealed class WarehouseModule : IServerModule
     {
         if(item.ParentId != pmc.Inventory.Stash?.ToString() || item.SlotId != "hideout") return false;
         // Check every descendant too: containers cannot bypass a disabled category.
-        return ItemTree(item,pmc).All(x => CategoryAllowed(x)
+        return ItemTree(item,pmc).All(x => !ManuallyLocked(x) && DepositAllowed(x)
             && items.GetItem(x.Template).Value.Properties.QuestItem != true
             && !(pmc.InsuredItems?.Any(i => i.ItemId == x.Id) ?? false));
     }
@@ -153,33 +225,38 @@ public sealed class WarehouseModule : IServerModule
             if(!ready) return json.Serialize(new { error = "Warehouse unavailable. Check server log." });
             var pmc = Profile(session);
             // Reuse SPT sizing, including stash upgrades and extra-row bonuses.
-            var stashSize=((int,int))typeof(InventoryHelper).GetMethod("GetPlayerStashSize",
-                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.Invoke(inventory,new object[] {pmc})!;
+            var stashSize=StashSize(pmc);
+            // Request-local indexes: never reuse across inventory mutations or other screens.
+            var children=pmc.Inventory.Items.ToLookup(x => x.ParentId);
+            var insured=new HashSet<string>(pmc.InsuredItems?.Select(x => x.ItemId.ToString()) ?? Enumerable.Empty<string>());
             return json.Serialize(new { revision = store.State.Revision, width = WarehouseDimensions.Width, height = store.Rows,
+                historyAvailable=historyOptions.Enabled && historyOptions.Public,
+                fees=new {enabled=fees.Enabled,currency=fees.Currency,deposit=fees.Deposit,withdrawal=fees.Withdrawal,balance=CurrencyBalance(pmc)},
                 personalWidth=stashSize.Item1, personalHeight=stashSize.Item2,
                 items = store.State.Items.Where(store.Visible).Select(PublicItem),
                 blocked = store.State.Items.Where(x => !store.Visible(x) && x.Y<store.Rows).Select(x => new {x=x.X,y=x.Y,width=x.Width,height=store.Rows-x.Y}),
-                personal = pmc.Inventory.Items.Where(x => x.ParentId == pmc.Inventory.Stash?.ToString() && x.SlotId == "hideout").Select(x => PersonalItem(x,pmc)), error = "" });
+                personal = children[pmc.Inventory.Stash?.ToString()].Where(x => x.SlotId == "hideout").Select(x => PersonalItem(x,pmc,children,insured)), error = "" });
         }
         catch(Exception error) { return json.Serialize(new { error = error.Message }); }
         finally { gate.Release(); }
     }
-    private object PersonalItem(Item item,PmcData pmc)
+    private object PersonalItem(Item item,PmcData pmc,ILookup<string,Item> children,HashSet<string> insured)
     {
         var location=item.Location as ItemLocation ?? json.Deserialize<ItemLocation>(json.Serialize(item.Location))
             ?? throw new InvalidOperationException("Stash item location unavailable.");
-        var size=inventory.GetItemSize(item.Template,item.Id,pmc.Inventory.Items);
+        var tree=ItemTree(item,pmc,children);
+        // SPT builds a fresh item/parent hash inside GetItemSize. It only needs this
+        // root and its descendants, not a fresh hash of the whole stash for every tile.
+        var size=inventory.GetItemSize(item.Template,item.Id,tree);
         bool rotated=location.R == ItemRotation.Vertical;
-        var tree=new List<Item> {item};
-        var ids=new HashSet<string> {item.Id.ToString()};
-        for(int i=0;i<tree.Count;i++)
-            foreach(var child in pmc.Inventory.Items.Where(x => x.ParentId == tree[i].Id.ToString()))
-                if(ids.Add(child.Id.ToString())) tree.Add(child);
+        bool transferable=tree.All(x => !ManuallyLocked(x) && DepositAllowed(x) && items.GetItem(x.Template).Value.Properties.QuestItem != true
+            && !insured.Contains(x.Id.ToString()));
+        bool canReceive=tree.Count==1 && !ManuallyLocked(item) && !insured.Contains(item.Id.ToString()) && items.GetItem(item.Template).Value.Properties.QuestItem != true;
         return new { id=item.Id.ToString(), template=item.Template.ToString(), name=items.GetItemName(item.Template),
             x=location.X ?? 0, y=location.Y ?? 0, width=rotated ? size.Item2 : size.Item1,
             height=rotated ? size.Item1 : size.Item2, rotated, count=(int)(item.Upd?.StackObjectsCount ?? 1),
             maxStack=items.GetItem(item.Template).Value.Properties.StackMaxSize ?? 1,
-            transferable=Eligible(item,pmc), canReceive=PersonalStack(item,pmc), upd=item.Upd, tree };
+            transferable, canReceive, upd=item.Upd, tree };
     }
     private object PublicItem(WarehouseEntry entry) => new { id=entry.Id, template=entry.Template, name=entry.Name,
         x=entry.X, y=entry.Y, width=entry.Width, height=entry.Height, count=entry.Count, rotated=entry.Rotated,
@@ -189,8 +266,23 @@ public sealed class WarehouseModule : IServerModule
     private List<Item> StoredTree(WarehouseEntry entry) =>
         new[] {entry.Json}.Concat(entry.ChildrenJson ?? new List<string>()).Select(x => json.Deserialize<Item>(x)!).ToList();
 
+    private static readonly System.Reflection.MethodInfo getStashSize = typeof(InventoryHelper).GetMethod("GetPlayerStashSize",
+        System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+    private (int,int) StashSize(PmcData pmc)
+    {
+        var size=((int,int))getStashSize.Invoke(inventory,new object[] {pmc})!;
+        if(size.Item1<1 || size.Item2<1) throw new InvalidOperationException("Personal stash dimensions unavailable.");
+        return size;
+    }
+
     public async ValueTask<ItemEventRouterResponse> Transfer(PmcData pmc, WarehouseRequest request, MongoId session, ItemEventRouterResponse output)
     {
+        // Never commit ownership/fees if SPT failed to create the response that must
+        // carry the delta back to the client. A null framework response cannot be
+        // repaired by returning another object: ItemEventCallbacks ignores that return.
+        if(output?.ProfileChanges==null || !output.ProfileChanges.TryGetValue(session,out var profileDelta)
+            || profileDelta?.Items?.NewItems==null || profileDelta.Items.ChangedItems==null || profileDelta.Items.DeletedItems==null)
+            throw new InvalidOperationException("Inventory response unavailable. No warehouse transfer was started; reconnect and try again.");
         await gate.WaitAsync();
         bool journalStarted = false;
         try
@@ -226,7 +318,10 @@ public sealed class WarehouseModule : IServerModule
             if(request.Direction == "move")
             {
                 bool moved;
-                try { moved=store.Reposition(request.ItemId,request.X!.Value,request.Y!.Value,request.RequestId,session.ToString(),request.Rotated); }
+                var original=store.State.Items.Single(i=>i.Id==request.ItemId);
+                var record=AuditEvent(pmc,request,"move",original,original.Count);
+                if(record!=null) record.PlayerId=session.ToString();
+                try { moved=store.Reposition(request.ItemId,request.X!.Value,request.Y!.Value,request.RequestId,session.ToString(),request.Rotated,record); }
                 catch(Exception error)
                 {
                     ready=false;
@@ -248,7 +343,7 @@ public sealed class WarehouseModule : IServerModule
                 entry = Describe(profileItem);
                 var tree=ItemTree(profileItem,pmc);
                 entry.ChildrenJson=tree.Skip(1).Select(x => json.Serialize(x)).ToList();
-                var size=inventory.GetItemSize(profileItem.Template,profileItem.Id,pmc.Inventory.Items);
+                var size=inventory.GetItemSize(profileItem.Template,profileItem.Id,tree);
                 entry.Width=size.Item1; entry.Height=size.Item2;
                 if(entry.Width != entry.Height && request.Rotated == true)
                 {
@@ -269,8 +364,8 @@ public sealed class WarehouseModule : IServerModule
                 if(pmc.Inventory.Items.Any(x => x.Id.ToString() == entry.Id)) throw new InvalidOperationException("Duplicate item ID in profile.");
                 profileItem = json.Deserialize<Item>(entry.Json)!;
                 var stash = pmc.Inventory.Items.Single(x => x.Id == pmc.Inventory.Stash);
-                var grid = items.GetItem(stash.Template).Value.Properties.Grids.First().Properties;
-                var map = inventory.GetContainerMap(grid.CellsH!.Value, grid.CellsV!.Value, pmc.Inventory.Items, stash.Id);
+                var size=StashSize(pmc);
+                var map = inventory.GetContainerMap(size.Item1, size.Item2, pmc.Inventory.Items, stash.Id);
                 var slot = inventory.PlaceItemInContainer(map, StoredTree(entry), stash.Id.ToString(), "hideout");
                 if(slot.Success != true) throw new InvalidOperationException("Your personal stash has no free space.");
                 profileItem.ParentId = stash.Id.ToString(); profileItem.SlotId = "hideout";
@@ -287,15 +382,27 @@ public sealed class WarehouseModule : IServerModule
             transfer.ProfileChanges=transferred.Select(i => new WarehouseProfileChange {
                 Id=i.Id.ToString(), Before=request.Direction == "deposit" ? json.Serialize(i) : null,
                 After=request.Direction == "withdraw" ? json.Serialize(i) : null }).ToList();
+            transfer.Audit=AuditEvent(pmc,request,request.Direction,entry,entry.Count,true);
+            if(transfer.Audit!=null)
+            {
+                transfer.Audit.PlayerId=session.ToString();
+                if(request.Direction=="deposit") { transfer.Audit.ToX=entry.X; transfer.Audit.ToY=entry.Y; }
+                else { transfer.Audit.FromX=entry.X; transfer.Audit.FromY=entry.Y; }
+            }
+            var feeChanges=PrepareFee(pmc,request,transfer,request.Direction);
             // Once the journal exists, do not cancel half a transfer when the client disconnects.
             journalStarted = true;
             store.Begin(transfer);
             await ApplyProfile(transfer, false);
             store.Commit();
             var changes = output.ProfileChanges[session].Items;
-            foreach(var item in transferred)
-                if(request.Direction == "deposit") changes.DeletedItems.Add(new DeletedItem { Id=item.Id });
-                else changes.NewItems.Add(item);
+            // EFT snapshots all player items before applying deletions, then discards each
+            // matching object. Discarding the root detaches its entire subtree. Deleting a
+            // descendant afterwards makes GetOwner throw on the already detached parent.
+            // The journal/profile still removes every descendant; only the client delta is root-only.
+            if(request.Direction == "deposit") changes.DeletedItems.Add(new DeletedItem { Id=profileItem.Id });
+            else foreach(var item in transferred) changes.NewItems.Add(item);
+            FeeDelta(output,session,feeChanges);
             Console.WriteLine($"[CommunityWarehouse] {request.Direction} {entry.Id} by {session}, revision {store.State.Revision}");
             return output;
         }
@@ -323,7 +430,7 @@ public sealed class WarehouseModule : IServerModule
         var source=Resolve(request.ItemId,sourcePersonal);
         var target=Resolve(request.TargetId,request.TargetPersonal);
         if(sourcePersonal && !request.TargetPersonal && !Eligible(source,pmc))
-            throw new InvalidOperationException("This category cannot be deposited.");
+            throw new InvalidOperationException("This item cannot be deposited under the server rules.");
         if(source.Template != target.Template || !WarehouseStackRules.Compatible(json.Serialize(source.Upd),json.Serialize(target.Upd)))
             throw new InvalidOperationException("Stacks must have identical item properties and Found in Raid status.");
         int sourceCount=checked((int)(source.Upd?.StackObjectsCount ?? 1));
@@ -351,6 +458,17 @@ public sealed class WarehouseModule : IServerModule
         }
         Change(source,sourcePersonal,sourceCount-amount);
         Change(target,request.TargetPersonal,targetCount+amount);
+        if(!sourcePersonal || !request.TargetPersonal)
+        {
+            transfer.Audit=AuditEvent(pmc,request,sourcePersonal ? "deposit" : request.TargetPersonal ? "withdraw" : "merge",Describe(source),amount);
+            if(transfer.Audit!=null)
+            {
+                transfer.Audit.PlayerId=session.ToString();
+                if(!sourcePersonal) { var e=store.State.Items.Single(i=>i.Id==request.ItemId); transfer.Audit.FromX=e.X; transfer.Audit.FromY=e.Y; }
+                if(!request.TargetPersonal) { var e=store.State.Items.Single(i=>i.Id==request.TargetId); transfer.Audit.ToX=e.X; transfer.Audit.ToY=e.Y; }
+            }
+        }
+        PrepareFee(pmc,request,transfer,sourcePersonal != request.TargetPersonal ? (sourcePersonal ? "deposit" : "withdraw") : "move");
         try { store.Begin(transfer); await ApplyProfile(transfer,false); store.Commit(); }
         catch(Exception error)
         {
@@ -457,8 +575,8 @@ public sealed class WarehouseModule : IServerModule
         if(request.Direction == "withdraw")
         {
             var stash=pmc.Inventory.Items.Single(i => i.Id == pmc.Inventory.Stash);
-            var grid=items.GetItem(stash.Template).Value.Properties.Grids.First().Properties;
-            var map=inventory.GetContainerMap(grid.CellsH!.Value,grid.CellsV!.Value,pmc.Inventory.Items,stash.Id);
+            var size=StashSize(pmc);
+            var map=inventory.GetContainerMap(size.Item1,size.Item2,pmc.Inventory.Items,stash.Id);
             var slot=inventory.PlaceItemInContainer(map,new List<Item>{part},stash.Id.ToString(),"hideout");
             if(slot.Success != true) throw new InvalidOperationException("Your personal stash has no free space.");
             part.ParentId=stash.Id.ToString(); part.SlotId="hideout";
@@ -472,6 +590,20 @@ public sealed class WarehouseModule : IServerModule
             if(!fits) throw new InvalidOperationException("No free space for the split stack. The original stack stays in place.");
         }
         transfer.ProfileItemJson=json.Serialize(part);
+        transfer.Audit=AuditEvent(pmc,request,transfer.Direction,entry,amount);
+        if(transfer.Audit!=null)
+        {
+            transfer.Audit.PlayerId=session.ToString(); transfer.Audit.TargetId=part.Id.ToString();
+            if(request.Direction!="deposit") { var e=store.State.Items.Single(i=>i.Id==request.ItemId); transfer.Audit.FromX=e.X; transfer.Audit.FromY=e.Y; }
+            if(request.Direction!="withdraw") { transfer.Audit.ToX=entry.X; transfer.Audit.ToY=entry.Y; }
+        }
+        // Normalize legacy split fields into the same atomic profile change journal as fees.
+        transfer.ProfileChanges=new();
+        if(request.Direction=="deposit") transfer.ProfileChanges.Add(new WarehouseProfileChange {
+            Id=source.Id.ToString(),Before=json.Serialize(source),After=json.Serialize(remainder)});
+        else if(request.Direction=="withdraw") transfer.ProfileChanges.Add(new WarehouseProfileChange {
+            Id=part.Id.ToString(),Before=null,After=json.Serialize(part)});
+        var feeChanges=PrepareFee(pmc,request,transfer,request.Direction);
         try
         {
             store.Begin(transfer);
@@ -486,6 +618,7 @@ public sealed class WarehouseModule : IServerModule
         }
         if(request.Direction == "deposit") output.ProfileChanges[session].Items.ChangedItems.Add(remainder);
         else if(request.Direction == "withdraw") output.ProfileChanges[session].Items.NewItems.Add(part);
+        FeeDelta(output,session,feeChanges);
         Console.WriteLine($"[CommunityWarehouse] {transfer.Direction} {amount}/{available} from {source.Id}, revision {store.State.Revision}");
         return output;
     }
